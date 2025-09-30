@@ -1,0 +1,263 @@
+---
+title: "Brasil x Polônia: uma análise de gasto educacional e desempenho econômico"
+author: "Julia Teixeira"
+date: "2025-09-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Objetivo
+
+Analisar e comparar Brasil e Polônia entre 1990–2019, integrando duas bases de dados (Penn World Table e World Development Indicators), com foco em **crescimento econômico** e **gasto em educação**. O trabalho busca entender por que a Polônia apresentou trajetória de crescimento superior, destacando o papel de educação, políticas institucionais e eficiência no uso dos recursos.
+
+------------------------------------------------------------------------
+
+```{r bibliotecas, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(tidyverse)
+```
+
+## Leitura das bases brutas
+
+```{r importando bases, include=FALSE}
+wdid_path <- "C:/Users/julia/OneDrive/Documentos/FGV/R 2025/P_Data_Extract_From_World_Development_Indicators/6959629a-9f3e-497c-9a69-2d916d48a5c6_Data.csv"
+wdim_path <- "C:/Users/julia/OneDrive/Documentos/FGV/R 2025/P_Data_Extract_From_World_Development_Indicators/6959629a-9f3e-497c-9a69-2d916d48a5c6_Series - Metadata.csv"
+pwt_path  <- "C:/Users/julia/OneDrive/Documentos/FGV/R 2025/nl_ug_pwt_microdados.csv.gz"
+```
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+# Primeiro, criei variáveis com os caminhos dos arquivos
+
+# wdid_path <- caminho do arquivo
+# wdim_path <- caminho do arquivo
+# pwt_path  <- caminho do arquivo
+
+# Em seguida, importo as bases de dados usando a função read_csv
+
+wdi_data <- read_csv(wdid_path)
+wdi_meta <- read_csv(wdim_path)
+pwt      <- read_csv(pwt_path)
+```
+
+## Limpeza (PWT) e variáveis derivadas
+
+```{r filtrar}
+# Seleciono colunas essenciais
+pwt_min <- pwt %>%
+  select(
+    year, country_id_iso_3, country,
+    real_gdp_expenditures, real_gdp_output,
+    current_share_gcf, current_capital_stock,
+    current_share_x, current_share_m,
+    employees, population
+  ) %>%
+  mutate(
+    year = as.integer(year),
+    gdp_pc = real_gdp_expenditures / population,          # PIB per capita (PPP, lado despesa)
+    gdp_per_worker = real_gdp_expenditures / employees    # Produtividade do trabalho
+  )
+
+# Brasil & Polônia, 1990–2019
+pwt_br_pol <- pwt_min %>%
+  filter(
+    country_id_iso_3 %in% c("BRA", "POL"),
+    between(year, 1990, 2019)
+  ) %>%
+  arrange(country_id_iso_3, year)
+```
+
+## Limpeza (WDI) e seleção das séries de educação
+
+```{r limpar_wdi}
+# Removo linhas sem dados quantificados
+wdi_data <- wdi_data %>%
+  slice(-c(19:23))
+
+# Capturo colunas de anos e mantém 1990–2019
+cols_anos <- names(wdi_data)[5:ncol(wdi_data)]
+cols_anos <- cols_anos[cols_anos %in% paste0(1990:2019, " [YR", 1990:2019, "]")]
+
+# Long: (país, série, ano, valor)
+wdi_long <- wdi_data %>%
+  dplyr::select(`Country Name`, `Country Code`, `Series Name`, `Series Code`, dplyr::all_of(cols_anos)) %>%
+  tidyr::pivot_longer(
+    cols      = dplyr::all_of(cols_anos),
+    names_to  = "year",
+    values_to = "value"
+  ) %>%
+  dplyr::mutate(
+    year  = as.integer(substr(year, 1, 4)),                     # extraindo "1990" de "1990 [YR1990]"
+    value = readr::parse_number(value, na = c("..", "NA", ""))  # tratando ".." como NA
+  )
+
+# As 9 séries educacionais
+educ_codes <- c(
+  "SE.SEC.CUAT.PO.ZS",  # pós-sec. completo (25+), %
+  "SE.SEC.CUAT.UP.ZS",  # médio completo (25+), %
+  "SE.TER.CUAT.BA.ZS",  # bacharel completo (25+), %
+  "SE.TER.CUAT.ST.ZS",  # terciário curto completo (25+), %
+  "SE.XPD.CSEC.ZS",     # gasto corrente - secundário (% do gasto público em instituições públicas)
+  "SE.XPD.CTER.ZS",     # gasto corrente - superior   (% do gasto público em instituições públicas)
+  "SE.XPD.CTOT.ZS",     # gasto corrente - total      (% do gasto público em instituições públicas)
+  "SE.XPD.TOTL.GB.ZS",  # gasto total educação (% do gasto do governo)
+  "SE.XPD.TOTL.GD.ZS"   # gasto total educação (% do PIB)
+)
+
+# Mantendo BR/POL + 9 séries; deixa em WIDE usando os códigos como nomes de coluna
+wdi_wide <- wdi_long %>%
+  filter(`Country Code` %in% c("BRA","POL"),
+         `Series Code` %in% educ_codes,
+         between(year, 1990, 2019)) %>%
+  select(`Country Code`, year, `Series Code`, value) %>%
+  pivot_wider(names_from = `Series Code`, values_from = value) %>%
+  rename(country_id_iso_3 = `Country Code`)
+
+# Renomeando variáveis-chave para nomes fáceis
+wdi_wide <- wdi_wide %>% rename(
+  ed_spend_gdp   = `SE.XPD.TOTL.GD.ZS`, # gasto total educ (% do PIB)
+  ed_spend_gov   = `SE.XPD.TOTL.GB.ZS`, # gasto total educ (% do gasto do governo)
+  sec_complete_25= `SE.SEC.CUAT.UP.ZS`, # médio completo (25+)
+  postsec_25     = `SE.SEC.CUAT.PO.ZS`, # pós-sec completo (25+)
+  ter_ba_25      = `SE.TER.CUAT.BA.ZS`, # bacharel completo (25+)
+  ter_short_25   = `SE.TER.CUAT.ST.ZS`, # terciário curto completo (25+)
+  cur_spend_sec  = `SE.XPD.CSEC.ZS`,    # gasto corrente sec (% inst púb)
+  cur_spend_ter  = `SE.XPD.CTER.ZS`,    # gasto corrente ter (% inst púb)
+  cur_spend_tot  = `SE.XPD.CTOT.ZS`     # gasto corrente total (% inst púb)
+)
+```
+
+## Integração (join) — painel Brasil x Polônia
+
+```{r integrar}
+# Join reprodutível por país (ISO3) e ano
+panel <- pwt_br_pol %>%
+  left_join(wdi_wide, by = c("country_id_iso_3", "year")) %>%
+  arrange(country_id_iso_3, year)
+
+# Índice de PIB pc = 100 no primeiro ano observado (1990)
+panel <- panel %>%
+  group_by(country_id_iso_3) %>%
+  arrange(year, .by_group = TRUE) %>%
+  mutate(gdp_pc_idx_1990 = 100 * gdp_pc / first(gdp_pc)) %>%
+  ungroup()
+```
+
+# Gráfico 1 — PIB per capita (PPP), índice 1990=100
+
+```{r grafico_pibpc}
+plt1 <- ggplot(panel, aes(x = year, y = gdp_pc_idx_1990, color = country_id_iso_3)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.5) +
+  scale_y_continuous(labels = function(x) paste0(x)) +
+  labs(title = "PIB per capita (PPP): índice 1990=100",
+       subtitle = "Fonte: PWT (real_gdp_expenditures/pop)",
+       x = NULL, y = "Índice (1990=100)", color = "País (ISO3)") +
+  theme_minimal()
+plt1
+```
+
+**Leitura:** Ao longo de 1990–2019, a curva da Polônia (POL) sobe mais rápido e atinge valores bem mais altos que a curva do Brasil (BRA).
+
+-   Brasil: o PIB per capita cresceu, mas de forma lenta e irregular (anos de estagnação e crises).
+
+-   Polônia: desde os anos 1990, apresentou crescimento mais constante, sem grandes períodos de queda, puxando o índice para cima.
+
+    Se em 1990 Brasil e Polônia estavam em níveis parecidos, em 2019 a Polônia se distanciou — ou seja, aumentou sua renda relativa em comparação ao Brasil.
+
+    *O PIB per capita foi calculado indexado a 1990 = 100.*
+
+# Gráfico 2 — Gasto total em educação (% do PIB)
+
+```{r grafico_gasto_educ}
+plt2 <- ggplot(panel, aes(x = year, y = ed_spend_gdp, color = country_id_iso_3)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.5) +
+  labs(title = "Gasto total em educação (% do PIB)",
+       subtitle = "Fonte: WDI — SE.XPD.TOTL.GD.ZS",
+       x = NULL, y = "% do PIB", color = "País (ISO3)") +
+  theme_minimal()
+plt2
+```
+
+**Leitura:** Brasil e Polônia apresentam percentuais de gasto em educação parecidos em alguns períodos. Em outros momentos, o Brasil até aparece com valores iguais ou ligeiramente maiores do que a Polônia. Só que o gráfico não mostra “qualidade do gasto”, apenas o quanto do PIB foi destinado.
+
+Apesar de gastar em proporções similares, o Brasil não converteu esse gasto em ganhos de renda per capita tão grandes quanto a Polônia. A Polônia, além do gasto, passou por reformas institucionais e integração à União Europeia, que aumentaram produtividade e atraíram investimento. O Brasil, por outro lado, enfrentou instabilidade macroeconômica e problemas de eficiência no uso dos recursos.
+
+Portanto, não basta olhar só para o percentual gasto. O dado mostra que a Polônia conseguiu transformar níveis de gasto em melhor desempenho econômico, enquanto o Brasil não teve a mesma eficiência.
+
+------------------------------------------------------------------------
+
+## Glossário (pós-limpeza)
+
+| Variável | Fonte | Descrição |
+|:--------------------------------|:------------------|:-------------------|
+| `country_id_iso_3` | PWT/WDI | Código de país ISO3 ("BRA", "POL") |
+| `year` | PWT/WDI | Ano calendário |
+| `gdp_pc` | PWT | PIB per capita (PPP) = `real_gdp_expenditures/population` |
+| `gdp_pc_idx_1990` | derivada | Índice de PIB pc (1990=100) para comparar trajetórias |
+| `ed_spend_gdp` | WDI | `SE.XPD.TOTL.GD.ZS` — Gasto total em educação (% do PIB) |
+| `ed_spend_gov` | WDI | `SE.XPD.TOTL.GB.ZS` — Gasto educação (% do gasto do governo) |
+| `sec_complete_25` | WDI | `SE.SEC.CUAT.UP.ZS` — Médio completo (25+) |
+| `postsec_25` | WDI | `SE.SEC.CUAT.PO.ZS` — Pós-sec completo (25+) |
+| `ter_ba_25` | WDI | `SE.TER.CUAT.BA.ZS` — Bacharel completo (25+) |
+| `ter_short_25` | WDI | `SE.TER.CUAT.ST.ZS` — Terciário curto completo (25+) |
+| `cur_spend_sec` | WDI | `SE.XPD.CSEC.ZS` — Gasto corrente secundário (% gasto púb em inst púb) |
+| `cur_spend_ter` | WDI | `SE.XPD.CTER.ZS` — Gasto corrente superior (% gasto púb em inst púb) |
+| `cur_spend_tot` | WDI | `SE.XPD.CTOT.ZS` — Gasto corrente total (% gasto púb em inst púb) |
+
+------------------------------------------------------------------------
+
+## Como reproduzir
+
+1.  **Arquivos locais**: mantenha os três caminhos (`wdid_path`, `wdim_path`, `pwt_path`) válidos.
+2.  **R Packages**: `dplyr`, `tidyr`, `ggplot2`, `tidyverse` (já carregados acima).
+3.  **Render**: Knit/Render este `.Rmd` para HTML.
+4.  **Publicação**: suba o HTML final e este arquivo para um repositório público (GitHub).
+
+------------------------------------------------------------------------
+
+## Validação e origem das bases
+
+-   **PWT — Penn World Table 10.x via Base dos Dados**: conjunto hospedado pela Base dos Dados (Universidade de Groningen como fonte original). O link informado pelo projeto: *Penn World Tables (PWT) – Base dos Dados*. Os arquivos utilizados aqui foram exportados localmente a partir dessa fonte (ver `pwt_path`).
+-   **WDI — World Development Indicators (Banco Mundial)**: acessado pelo portal oficial do World Bank / DataBank (CSV exportado), incluindo metadados em `wdim_path`.
+
+Ambas as origens são públicas e versionadas.
+
+------------------------------------------------------------------------
+
+## Referências e trechos reutilizados
+
+### Bases de dados
+
+-   Penn World Table (PWT 10.x) – fonte original: University of Groningen / GGDC.
+    -   Acessei via Base dos Dados.
+-   World Development Indicators (WDI) – fonte original: World Bank DataBank.
+
+### Fontes
+
+Cavalcanti, P., & Fragelli, R. (2025, July 24). Milagres, desastres e estagnação. Valor Econômico.
+
+Kunsch, M., Cunha, M., & Barcellos, L. (n.d.). *Ciência de Dados em R*. Curso-R. Retrieved September 30, 2025, from <https://livro.curso-r.com/>
+
+### Pacotes R usados
+
+-   tidyverse (dplyr, tidyr, ggplot2, readr, etc.)
+
+### Metodologia / pipeline
+
+-   Funções básicas do dplyr (mutate, filter, select, arrange, left_join)
+
+-   Transformações com tidyr (pivot_longer, pivot_wider)
+
+-   Visualização com ggplot2
+
+------------------------------------------------------------------------
+
+## Divulgação de IA
+
+Usei auxílio de IA (ChatGPT) **apenas** para organizar o pipeline e comentários. Prompts principais: “usar meus CSVs locais; operador pipe; dois gráficos simples; glossário.
