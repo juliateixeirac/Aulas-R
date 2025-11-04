@@ -1,0 +1,1655 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+Nesse arquivo, eu vou usar outros dados para a tarifa
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(stringr)
+```
+Com Alemanha
+```{r}
+caminho1 <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\TradeData_10_8_2025_12_25_59.csv"
+
+# exportação e importação entre BRA, CHN, USA, EU, KOR, CAN, MEX
+
+comtrade <- read_csv(caminho1, col_names = TRUE, col_types = NULL, na = c("","N/A")) %>% 
+  select(refYear, reporterISO, partnerISO, flowCode, fobvalue, cifvalue, cmdCode)
+  
+comtrade_m <- comtrade %>% 
+  filter(flowCode == "M") %>% 
+  rename(
+    year = refYear,
+    imp = reporterISO, # importador
+    exp = partnerISO  #exportador
+  ) %>% 
+  select(year, imp, exp, fobvalue, cifvalue, cmdCode)
+
+
+comtrade_x <- comtrade %>% 
+  filter(flowCode == "X") %>% 
+  rename(
+    year = refYear,
+    exp  = reporterISO,   # exportador 
+    imp     = partnerISO,  # importador
+  ) %>% 
+  select(year, exp, imp, fobvalue, cmdCode)
+
+head(comtrade)
+colnames(comtrade)
+```
+
+```{r}
+tarifasmfnpath <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\API_TM.TAX.MRCH.WM.AR.ZS_DS2_en_csv_v2_1001.csv"
+tarifas_mfn_wb <- read.csv("API_TM.TAX.MRCH.WM.AR.ZS_DS2_en_csv_v2_1001.csv", skip = 4)
+
+
+```
+
+```{r}
+library(readxl)
+
+tradewarpath <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\us-china-trade-war-tariffs.xlsx"
+trade_war <- read_excel(tradewarpath, sheet = 2, skip = 3)
+
+steel_keywords <- c(
+  "section 232", "steel", "aluminum", "aluminium",
+  "tariff-rate quota", "TRQ", "derivative products",
+  "canada", "mexico", "korea", "south korea", "japan", "european union", "eu", "uk",
+  "brazil", "turkey"
+)
+
+trade_war_steel <- trade_war %>%
+  filter(str_detect(`Tariff action`, regex(paste(steel_keywords, collapse = "|"), ignore_case = TRUE)))
+
+
+# Criando uma variável ano com a tarifa média anual
+trade_war_vars <- trade_war_steel %>%
+  mutate(year = lubridate::year(Date)) %>%
+  group_by(year) %>%
+  summarise(
+    us_on_china = mean(`US tariffs on Chinese exports`, na.rm = TRUE),
+    cn_on_us = mean(`Chinese tariffs on US exports`, na.rm = TRUE)
+  )
+
+
+
+```
+
+
+# Tarifas
+
+```{r}
+tradecostindexpath <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\1_TCI_economy_sector (1).xlsx"
+tradecostindex <- read_excel(tradecostindexpath, sheet = 3)   # Basic Metals: código 12
+
+paises <- c("BRA", "USA", "CHI", "CAN", "KOR", "DEU", "EUN", "MEX")
+anos <- c("2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024")
+
+tradecostindex <- tradecostindex %>% 
+  filter(
+    ECONOMY %in% paises & YEAR %in% anos & `SECTOR CODE` == "12"
+  )
+
+# só tem de 2016 até 2018
+```
+
+
+```{r, warning = FALSE}
+# tarifas dos EUA
+tarifasEUA2018path <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\tariff_database_2018.xlsx"
+tarifasEUA2020path <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\tariff_database_202010.xlsx"
+tarifasEUA2024path <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\tariff_database_202405.xlsx"
+tarifasEUA2021path <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\tariff database_202106.xlsx"
+tarifasEUA2022path <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\tariff database_202207.xlsx"
+tarifasEUA2023path <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\tariff database_202307.xlsx"
+tarifasEUA2016path <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\tariff_database_2016.xlsx"
+tarifasEUA2017path <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\tariff_database_2017.xlsx"
+tarifasEUA2019path <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\2019_Tariff_Database_v11.xlsx"
+
+tarifasEUA2016 <- read_excel(tarifasEUA2016path)
+tarifasEUA2017 <- read_excel(tarifasEUA2017path)
+tarifasEUA2018 <- read_excel(tarifasEUA2018path)
+tarifasEUA2019 <- read_excel(tarifasEUA2019path)
+tarifasEUA2020 <- read_excel(tarifasEUA2020path)
+tarifasEUA2021 <- read_excel(tarifasEUA2021path)
+tarifasEUA2022 <- read_excel(tarifasEUA2022path)
+tarifasEUA2023 <- read_excel(tarifasEUA2023path)
+tarifasEUA2024 <- read_excel(tarifasEUA2024path)
+```
+
+Filtrando todas para só iron and steel
+```{r, warning = FALSE}
+# ---- 2016 ----
+tarifasEUA2016 <- read_excel(tarifasEUA2016path, .name_repair = "minimal") %>%
+  filter(str_starts(hts8, "72") | str_starts(hts8, "73"))
+
+# ---- 2017 ----
+tarifasEUA2017 <- read_excel(tarifasEUA2017path, .name_repair = "minimal") %>%
+  filter(str_starts(hts8, "72") | str_starts(hts8, "73"))
+
+# ---- 2018 ----
+tarifasEUA2018 <- read_excel(tarifasEUA2018path, .name_repair = "minimal") %>%
+  filter(str_starts(hts8, "72") | str_starts(hts8, "73"))
+
+# ---- 2019 ----
+tarifasEUA2019 <- read_excel(tarifasEUA2019path, .name_repair = "minimal") %>%
+  filter(str_starts(hts8, "72") | str_starts(hts8, "73"))
+
+# ---- 2020 ----
+tarifasEUA2020 <- read_excel(tarifasEUA2020path, .name_repair = "minimal") %>%
+  filter(str_starts(hts8, "72") | str_starts(hts8, "73"))
+
+# ---- 2021 ----
+tarifasEUA2021 <- read_excel(tarifasEUA2021path, .name_repair = "minimal") %>%
+  filter(str_starts(hts8, "72") | str_starts(hts8, "73"))
+
+# ---- 2022 ----
+tarifasEUA2022 <- read_excel(tarifasEUA2022path, .name_repair = "minimal") %>%
+  filter(str_starts(hts8, "72") | str_starts(hts8, "73"))
+
+# ---- 2023 ----
+tarifasEUA2023 <- read_excel(tarifasEUA2023path, .name_repair = "minimal") %>%
+  filter(str_starts(hts8, "72") | str_starts(hts8, "73"))
+
+# ---- 2024 ----
+tarifasEUA2024 <- read_excel(tarifasEUA2024path, .name_repair = "minimal") %>%
+  filter(str_starts(hts8, "72") | str_starts(hts8, "73")) 
+
+colunas_selecao <- c(
+  "hts8", "brief_description", "mfn_ad_val_rate", "mfn_specific_rate",
+  "col1_special_text", "begin_effect_date", "end_effective_date",
+  "korea_ad_val_rate", "mexico_ad_val_rate"
+)
+
+tarifasEUA2016 <- tarifasEUA2016 %>% select(all_of(colunas_selecao))
+tarifasEUA2017 <- tarifasEUA2017 %>% select(all_of(colunas_selecao))
+tarifasEUA2018 <- tarifasEUA2018 %>% select(all_of(colunas_selecao))
+tarifasEUA2019 <- tarifasEUA2019 %>% select(all_of(colunas_selecao))
+tarifasEUA2020 <- tarifasEUA2020 %>% select(all_of(colunas_selecao))
+tarifasEUA2021 <- tarifasEUA2021 %>% select(all_of(colunas_selecao))
+tarifasEUA2022 <- tarifasEUA2022 %>% select(all_of(colunas_selecao))
+tarifasEUA2023 <- tarifasEUA2023 %>% select(all_of(colunas_selecao))
+tarifasEUA2024 <- tarifasEUA2024 %>% select(all_of(colunas_selecao))
+
+```
+
+```{r}
+lista_tarifas <- list(
+  "2016" = tarifasEUA2016,
+  "2017" = tarifasEUA2017,
+  "2018" = tarifasEUA2018,
+  "2019" = tarifasEUA2019,
+  "2020" = tarifasEUA2020,
+  "2021" = tarifasEUA2021,
+  "2022" = tarifasEUA2022,
+  "2023" = tarifasEUA2023,
+  "2024" = tarifasEUA2024
+)
+
+limpar_uma <- function(df, ano) {
+  df %>%
+    select(any_of(colunas_selecao)) %>%
+    mutate(
+      year = as.integer(ano),
+      hts8 = as.character(hts8),
+      mfn_ad_val_rate  = suppressWarnings(as.numeric(mfn_ad_val_rate)),
+      mfn_specific_rate = suppressWarnings(as.numeric(mfn_specific_rate)),
+      begin_effect_date = suppressWarnings(as.Date(begin_effect_date)),
+      end_effective_date = suppressWarnings(as.Date(end_effective_date)),
+      korea_ad_val_rate = suppressWarnings(as.numeric(korea_ad_val_rate)),
+      mexico_ad_val_rate = suppressWarnings(as.numeric(mexico_ad_val_rate))
+    )
+}
+
+
+tarifas_todas <- imap_dfr(lista_tarifas, limpar_uma)
+
+# conferências rápidas
+dplyr::glimpse(tarifas_todas)
+dplyr::count(tarifas_todas, year)
+
+```
+
+```{r}
+# --- CÓDIGO R AJUSTADO PARA SEPARAR BRA E DEU ---
+
+# 1. Calcular a tarifa média simples MFN e as específicas por ano
+tarifas_eua_medias <- tarifas_todas %>%
+  group_by(year) %>%
+  summarise(
+    # Tarifa MFN média (para BRA, DEU)
+    EUA_MFN_Tariff = mean(mfn_ad_val_rate, na.rm = TRUE),
+    # Tarifa média para Coreia do Sul (KOR)
+    EUA_KOR_Tariff = mean(korea_ad_val_rate, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Adicionar a tarifa da guerra comercial EUA -> China da trade_war_vars
+tarifas_eua_finais <- tarifas_eua_medias %>%
+  left_join(
+    trade_war_vars %>% select(year, us_on_china),
+    by = "year"
+  ) %>%
+  # Mesclar as tarifas MFN e KOR
+  pivot_longer(
+    cols = c(EUA_MFN_Tariff, EUA_KOR_Tariff),
+    names_to = "exporter_type",
+    values_to = "Tariff_Rate"
+  ) %>%
+  
+  # Duplicar as linhas de MFN para BRA e DEU, e mapear KOR
+  mutate(
+    exporter = case_when(
+      exporter_type == "EUA_MFN_Tariff" ~ "MFN", # Deixa como MFN para mapear 
+      exporter_type == "EUA_KOR_Tariff" ~ "KOR",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(year, exporter, Tariff_Rate)
+
+# 2. Criar linhas separadas para BRA e DEU (que são MFN)
+tarifas_bra_deu <- tarifas_eua_finais %>%
+    filter(exporter == "MFN") %>%
+    mutate(exporter = "BRA") %>%
+    bind_rows(
+        filter(tarifas_eua_finais, exporter == "MFN") %>% mutate(exporter = "DEU")
+    ) %>%
+    filter(exporter != "MFN") # Remove a linha temporária "MFN"
+
+# 3. Adicionar China (CHN)
+tarifas_chn <- tarifas_eua_finais %>%
+    select(year) %>% distinct() %>%
+    left_join(trade_war_vars %>% select(year, us_on_china), by = "year") %>%
+    mutate(exporter = "CHN", Tariff_Rate = us_on_china) %>%
+    select(year, exporter, Tariff_Rate)
+
+# 4. Combinar tudo
+tarifas_eua_finais_separadas <- bind_rows(
+    tarifas_bra_deu,
+    filter(tarifas_eua_finais, exporter == "KOR"),
+    tarifas_chn
+) %>%
+    # Filtra NA, se for o caso
+    filter(!is.na(Tariff_Rate)) %>%
+    arrange(year, exporter)
+
+# print(head(tarifas_eua_finais_separadas, 10))
+# Agora o BRA e o DEU estão separados, mas com a mesma Tarifa_Rate MFN para o importador USA.
+```
+
+
+```{r}
+tarifas_dedup <- tarifas_todas %>%
+  arrange(hts8, begin_effect_date, year) %>%              # para controlar qual fica
+  distinct(hts8, begin_effect_date, mfn_ad_val_rate, .keep_all = TRUE)
+
+# checar redução
+nrow(tarifas_todas); nrow(tarifas_dedup)
+
+```
+```{r}
+tarifas_maisrec <- tarifas_todas %>%
+  arrange(hts8, begin_effect_date, desc(year)) %>%
+  group_by(hts8, begin_effect_date) %>%
+  slice(1) %>%
+  ungroup()
+
+```
+
+```{r}
+library(dplyr)
+
+tarifas_com_delta <- tarifas_todas %>%
+  arrange(hts8, year) %>%
+  group_by(hts8) %>%
+  mutate(delta_tariff = mfn_ad_val_rate - lag(mfn_ad_val_rate),
+         mudou = !is.na(delta_tariff) & delta_tariff != 0) %>%
+  ungroup()
+
+# manter apenas linhas onde houve mudança OU o primeiro ano (baseline)
+tarifas_mudancas <- tarifas_com_delta %>%
+  group_by(hts8) %>%
+  filter(row_number() == 1 | mudou) %>%
+  ungroup()
+
+# inspeção
+tarifas_com_delta %>% summarise(prop_mudou = mean(mudou, na.rm = TRUE))
+
+```
+
+```{r}
+# produtos com pelo menos 1 mudança ao longo dos anos
+hts_com_mudanca <- tarifas_todas %>%
+  arrange(hts8, year) %>%
+  group_by(hts8) %>%
+  summarise(n_rates = n_distinct(mfn_ad_val_rate, na.rm = TRUE), .groups = "drop") %>%
+  filter(n_rates > 1) %>%
+  pull(hts8)
+
+tarifas_so_variantes <- tarifas_todas %>%
+  filter(hts8 %in% hts_com_mudanca)
+
+# Conferir onde houve mudança
+tarifas_so_variantes %>%
+  arrange(hts8, year) %>%
+  group_by(hts8) %>%
+  summarise(
+    anos = paste(unique(year), collapse = ", "),
+    taxas = paste(unique(mfn_ad_val_rate), collapse = " → ")
+  ) %>%
+  head(20)
+```
+
+
+```{r}
+tarifas_painel <- tarifas_so_variantes %>%
+  select(hts8, brief_description, mfn_ad_val_rate, begin_effect_date, year)
+
+```
+
+```{r}
+tarifas_painel <- tarifas_painel %>%
+  mutate(hs2 = substr(hts8, 1, 2)) %>%
+  group_by(year, hs2) %>%
+  summarise(
+    tarifa_media = mean(mfn_ad_val_rate, na.rm = TRUE),
+    n_produtos = n()
+  ) %>%
+  ungroup()
+
+```
+
+```{r}
+tarifas_todas <- tarifas_todas %>%
+  mutate(
+    diff_mexico = mfn_ad_val_rate - mexico_ad_val_rate,
+    diff_korea  = mfn_ad_val_rate - korea_ad_val_rate
+  )
+
+tarifas_todas <- tarifas_todas %>%
+  mutate(
+    fta_indicator = if_else(str_detect(col1_special_text, "Free"), 1, 0)
+  )
+
+```
+
+```{r}
+library(dplyr)
+library(stringr)
+
+# --- 1) criar variáveis: diffs e indicador de FTA (col1_special_text contém "Free(...)") ----
+tarifas_enriquecidas <- tarifas_todas %>%
+  mutate(
+    # garantir colunas mesmo se ausentes
+    mexico_ad_val_rate = if (!"mexico_ad_val_rate" %in% names(.)) NA_real_ else mexico_ad_val_rate,
+    korea_ad_val_rate  = if (!"korea_ad_val_rate"  %in% names(.)) NA_real_ else korea_ad_val_rate,
+
+    # converter para numérico com segurança
+    mexico_ad_val_rate = suppressWarnings(as.numeric(mexico_ad_val_rate)),
+    korea_ad_val_rate  = suppressWarnings(as.numeric(korea_ad_val_rate)),
+
+    # diferenças: quanto a tarifa MFN (Brasil) excede a preferencial
+    diff_mexico = mfn_ad_val_rate - mexico_ad_val_rate,
+    diff_korea  = mfn_ad_val_rate - korea_ad_val_rate,
+
+    # indicador se há isenção/preferência para algum parceiro (texto contém "Free")
+    fta_indicator = if_else(!is.na(col1_special_text) & str_detect(col1_special_text, regex("\\bFree\\b", ignore_case = TRUE)), 1L, 0L),
+
+    # capítulo HS2
+    hs2 = substr(hts8, 1, 2)
+  )
+
+# --- 2) AGREGAR por ano × HS2 (médias simples; você pode trocar por ponderada depois) ----
+tarifas_hs2_panel <- tarifas_enriquecidas %>%
+  group_by(year, hs2) %>%
+  summarise(
+    mfn_mean          = mean(mfn_ad_val_rate, na.rm = TRUE),
+    diff_mexico_mean  = mean(diff_mexico, na.rm = TRUE),   # >0: Brasil paga mais que México
+    diff_korea_mean   = mean(diff_korea,  na.rm = TRUE),   # >0: Brasil paga mais que Coreia
+    fta_share         = mean(fta_indicator, na.rm = TRUE), # fração de linhas "Free" para alguém
+    n_products        = n(),
+    .groups = "drop"
+  )
+
+# --- 3) checagens rápidas ----
+dplyr::glimpse(tarifas_hs2_panel)
+dplyr::count(tarifas_hs2_panel, hs2)
+summary(select(tarifas_hs2_panel, mfn_mean, diff_mexico_mean, diff_korea_mean, fta_share))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+
+```
+
+
+
+
+```{r}
+# Não tem uma coluna explícita para "China" como tem para México, Chile ou Coreia.Isso acontece porque a Tarifa da Seção 301 (guerra comercial EUA-China) não é um Acordo de Livre Comércio (FTA) permanente e não está na Coluna 1 das taxas preferenciais. Em vez disso, ela é implementada através dos códigos do Capítulo 99 do HTS.
+tarifasEUAChinahts8 <- c("9903.88.03", "9903.88.15", "9903.91.01", "9903.91.11", "9903.88.02")
+metal_range_pattern <- "^7[2-9]|^8[0-3]"
+colunas_selecao <- c(
+  "hts8", "brief_description", "mfn_ad_val_rate", "mfn_specific_rate",
+  "col1_special_text", "begin_effect_date", "end_effective_date",
+  "korea_ad_val_rate", "mexico_ad_val_rate"
+)
+
+```
+Como a Alemanha é o país que mais importa e exporta metais da UE, vou usar como proxy para os próximos passos: 
+
+```{r}
+caminho3 <- "C:/Users/julia/OneDrive/Documentos/FGV/TCC 2/dist_cepii.xls"
+dist_cepii <- read_excel(caminho3) %>% select(iso_o, iso_d, contig, comlang_off, colony, comcol, distw)
+# Vetor com os países desejados
+paises <- c("BRA", "USA", "KOR", "MEX", "CHN", "CAN", "DEU")
+# Filtrar linhas onde origem e destino estão no conjunto
+dist_cepii <- dist_cepii %>%
+  filter(iso_o %in% paises & iso_d %in% paises)
+head(dist_cepii)
+colnames(dist_cepii)
+```
+
+We use bilateral product-level trade data from BACI database (CEPII) to identify import dependent product along four criteria: i) the level of concentration of imports; ii) the level of concentration of world exports; iii) the substitutability of exports by domestic supply; and iv) the long-lasting dimension of dependencies.
+
+```{r}
+caminho5 <- "C:/Users/julia/OneDrive/Documentos/FGV/TCC 2/geodep_data.csv"
+geodep_data <- read_csv(caminho5)
+head(geodep_data)
+colnames(geodep_data)
+```
+
+B. Preparar a Variável de Custo de Comércio (Geodep) ️ A base geodep_data
+tem uma variável dependent (dummy de dependência) e outras como
+share_odpt (participação do principal parceiro). A variável sect_steel é
+crucial, mas está no formato de código HS6.
+
+```{r}
+geodep_data <- geodep_data %>%
+  filter(str_starts(hs6, "72") | str_starts(hs6, "73"))
+
+paises_input <- c("BRA","CAN","USA","CHN","DEU","KOR","MEX")
+geodep_data <- geodep_data %>%
+  filter(iso_d %in% paises_input) %>% 
+  filter(first_odpt %in% paises_input)
+
+geodep_data <- geodep_data %>% 
+  filter(first_odpt %in% paises_input)
+
+colnames(geodep_data)
+head(geodep_data)
+
+geodep_data <- geodep_data %>% 
+  select(iso_d, hs6, year, import_dpt, c1, c2, c3, c4, dependent, sect_steel, sect_other, first_odpt, share_odpt)
+```
+
+Filtrar por setor: Filtre por Iron and Steel. O código HS de 6 dígitos
+que você tem é o hs6. Você está analisando os códigos HS de 2 dígitos 72
+e 73. Você precisará ver como os códigos hs6 se mapeiam para 72 e 73 e
+agregá-los. Assumindo que você está interessado na dependência do país
+importador em Aço, filtre por sect_steel == 1.
+
+```{r}
+dep_rows <- geodep_data %>% filter(dependent == 1)
+head(dep_rows)
+
+```
+
+first_odpt é (em ISO-3) o principal país de origem do qual o importador
+(iso_d) mais depende para aquele produto HS6 naquele ano — o “parceiro
+de dependência primária”. Já share_odpt é a participação desse parceiro
+no abastecimento do HS6 (tipicamente % do valor importado daquele HS6
+pelo país), por isso você vê números como 92.47, 99.66, etc. (≈
+porcentagem).
+
+Agregação: Como você está trabalhando com o nível de 2 dígitos (72 e
+73), você deve agregar a dependência por ano e país importador (iso_d).
+O máximo valor de dependent em 72/73 pode indicar a dependência do país.
+
+Renomear: Renomeie iso_d para imp e year para <dbl>/<int>.
+
+```{r}
+caminhoeu <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\WITS-EU.xlsx"
+eu_data <- read_excel(caminhoeu, sheet = 2)
+head(eu_data)
+str(eu_data)
+colnames(eu_data)
+```
+
+```{r}
+caminho6 <- "C:/Users/julia/OneDrive/Documentos/FGV/TCC 2/AllRTAs.xlsx"
+allrta <- read_excel(caminho6, sheet = 1)
+rta_changes <- read_excel(caminho6, sheet = 2)
+# rta data encontrada no world trade organization
+head(allrta)
+colnames(allrta)
+head(rta_changes)
+colnames(rta_changes)
+```
+
+```{r}
+caminho7 <- "C:/Users/julia/OneDrive/Documentos/FGV/TCC 2/2073b384-9a95-4e5c-8c64-ee8aed59ee67_Series - Metadata.csv"
+gdp <- read_csv(caminho7)
+gdp <- gdp %>% slice(1:14)
+gdp <- gdp %>%
+  rename_with(~ str_replace(.x, " \\[YR\\d{4}\\]$", ""), matches("\\[YR\\d{4}\\]$"))
+# "2016 [YR2016]" -> "2016"
+
+gdp_current <- gdp %>% 
+  filter(`Series Name` == "GDP (current US$)") %>% 
+  pivot_longer(
+    cols = "2016":"2022",
+    names_to = "year",
+    values_to = "gdp_current_usd"
+  ) %>% 
+  select(`Country Code`, `year`, `gdp_current_usd`)
+head(gdp_current)
+
+
+gdp_per_capita <- gdp %>% 
+  filter(`Series Name` == "GDP per capita (current US$)") %>% 
+  pivot_longer(
+    cols = "2016":"2022",
+    names_to = "year",
+    values_to = "gdp_per_capita"
+  ) %>% 
+  select(`Country Code`, `year`, `gdp_per_capita`)
+head(gdp_per_capita)
+
+# Peguei no WDI 
+```
+
+Seu progresso na preparação dos dados para o seu modelo gravitacional de
+comércio internacional é bastante sólido. Você carregou e tratou dados
+de comércio (Comtrade), barreiras tarifárias (WITS-AHS), fatores de
+distância/contiguidade (CEPII) e construiu uma variável dummy para
+Acordos Regionais de Comércio (ARTs), o que é excelente.
+
+O tema do seu trabalho ("As consequências da guerra comercial EUA x
+China para o comércio brasileiro") é oportuno e se encaixa perfeitamente
+no uso de um modelo gravitacional com o foco em Iron and Steel (o qual
+corresponde aos códigos 72 e 73 que você filtrou no início).
+
+Abaixo está um guia de como prosseguir, detalhando as etapas de data
+wrangling que faltam, a especificação do modelo e a estratégia para
+capturar o efeito da Guerra Comercial.
+
+1.  Tratamento de Dados (Data Wrangling) Faltante Ainda faltam alguns
+    passos cruciais para que você possa combinar todas as bases e
+    estimar o modelo gravitacional:
+
+A. Preparar as Variáveis Macroeconômicas (PIB) 🌎 Seu modelo
+gravitacional exigirá variáveis de tamanho econômico (ln(PIB exportador ​
+) e ln(PIB importador ​ )) e possivelmente PIB per capita.
+
+Converter year para numérico: A coluna year na gdp_current e
+gdp_per_capita está como <chr>. Ela precisa ser convertida para <dbl> ou
+<int> para o join posterior.
+
+```{r}
+gdp_current$year <- as.numeric(gdp_current$year)
+gdp_per_capita$year <- as.numeric(gdp_per_capita$year)
+
+head(gdp_current)
+head(gdp_per_capita)
+```
+
+Tratar valores de PIB: A coluna gdp_current_usd e gdp_per_capita está
+como <chr> com pontos e possibly vírgulas como separadores decimais (ou
+sem separador, dependendo da formatação). Você deve remover quaisquer
+vírgulas e converter para numérico. Se houver valores vazios (..),
+trate-os como NAs antes da conversão.
+
+```{r}
+gdp_current$gdp_current_usd <- as.numeric(gdp_current$gdp_current_usd)
+gdp_per_capita$gdp_per_capita <- as.numeric(gdp_per_capita$gdp_per_capita)
+head(gdp_current)
+head(gdp_per_capita)
+```
+
+Renomear coluna de país: Renomeie a coluna Country Code para exp ou imp
+(dependendo de como você for juntar) para facilitar o join.
+
+```{r}
+gdp_current <- gdp_current %>% 
+  rename(
+    "iso" = `Country Code`
+  )
+gdp_per_capita <- gdp_per_capita %>% 
+  rename(
+    "iso" = `Country Code`
+  )
+
+head(gdp_current)
+head(gdp_per_capita)
+```
+
+```{r}
+# Dicionário de tradução (NOME COMPLETO -> ISO)
+# Países da amostra (sem Hong Kong e Macao, a menos que sejam de interesse)
+traducao_rtas <- tribble(
+  ~nome_completo, ~iso,
+  "Brazil", "BRA",
+  "United States", "USA",
+  "China", "CHN",
+  "Mexico", "MEX",
+  "Canada", "CAN",
+  "Germany", "DEU",
+  "Republic of Korea", "KOR"
+)
+
+paises_alvo <- traducao_rtas$nome_completo # Lista de nomes completos para a busca
+
+# As bases allrta e traducao_rtas devem estar carregadas/definidas
+
+rtas_pares_iso <- allrta %>%
+  
+  # A. Renomear e Criar Ano de Vigência (Passos seguros)
+  rename(
+    status_acordo = Status,
+    data_entrada_vigor_g = `Date of Entry into Force (G)`,
+    signatarios = `Current signatories`
+  ) %>%
+  mutate(
+    Ano_Vigencia = year(data_entrada_vigor_g)
+  ) %>%
+  
+  # B. Filtro por Vigência e Status Ativo
+  filter(
+    Ano_Vigencia <= 2024,
+    !(status_acordo %in% c("Superseded", "Terminated", "Inactive", "Expiry", "Suspended"))
+  ) %>%
+  
+  # C. Extração Robusta dos Pares e Garantia de Bilateralidade
+  rowwise() %>%
+  mutate(
+    # 1. Limpeza Provisória: Remove nomes de terceiros que possam confundir a contagem
+    # Remove 'Hong Kong, China', 'Macao, China' e outras regiões não-alvo.
+    # Se 'Current signatories' estiver truncado, não há solução 100% via código.
+    signatarios_limpos = str_remove_all(signatarios, 
+                                        "Hong Kong, China|Macao, China|European Union|EU|Taiwan|etc\\."), 
+    # ADICIONE AQUI OUTROS NOMES NÃO-ALVO COMUNS
+    
+    # 2. Encontra os nomes COMPLETOS dos países alvo na lista LIMPA
+    paises_no_acordo = list(str_extract_all(signatarios_limpos, 
+                                            paste(paises_alvo, collapse = "|")) %>% 
+                              unlist()),
+    
+    # 3. Contagem: Se for 2, é bilateral NA AMOSTRA
+    contagem_alvo = length(paises_no_acordo)
+  ) %>%
+  ungroup() %>%
+  
+  # Filtra: Mantém APENAS acordos com EXATAMENTE DOIS países da sua amostra (bilateral)
+  filter(contagem_alvo == 2) %>%
+  
+  # D. Criação do Par ISO para o JOIN
+  rowwise() %>%
+  mutate(
+    # Garante que os dois países extraídos são diferentes de NA
+    iso1 = traducao_rtas$iso[match(paises_no_acordo[1], traducao_rtas$nome_completo)],
+    iso2 = traducao_rtas$iso[match(paises_no_acordo[2], traducao_rtas$nome_completo)],
+    
+    # Cria o ID do par ordenado (ex: BRA-USA)
+    par_rta = paste(sort(c(iso1, iso2)), collapse = "-")
+  ) %>%
+  ungroup() %>%
+  
+  # E. Limpeza Final: Variável Dummy RTA pronta para o JOIN
+  select(par_rta, Ano_Vigencia, `RTA Name`) %>%
+  mutate(dummy_rta = 1) %>%
+  
+  # Remove duplicatas e garante que o par e o ano estão completos
+  distinct(par_rta, Ano_Vigencia, .keep_all = TRUE) %>%
+  drop_na(par_rta, Ano_Vigencia)
+
+# Visualizar o resultado final
+head(rtas_pares_iso)
+
+# ----------------------------------------------------------------------
+# 1. Definir e Extrair Parâmetros ISO (CORREÇÃO DO ERRO)
+# ----------------------------------------------------------------------
+
+# **Linha Corrigida:** Cria o vetor de códigos ISO
+paises_iso <- traducao_rtas$iso 
+anos_analise <- 2016:2022 # Período de análise
+
+# ----------------------------------------------------------------------
+# 2. Filtragem Teórica (Exclusão de Multilaterais Conhecidos)
+#    - Usa a base rtas_pares_iso que você já criou.
+# ----------------------------------------------------------------------
+
+# Filtro Teórico: Excluir acordos conhecidos como multilaterais de grande escopo
+rtas_limpos_final <- rtas_pares_iso %>%
+  filter(
+    !str_detect(`RTA Name`, 
+                # Termos a serem excluídos para garantir bilateralidade específica
+                "Global System of Trade Preferences|Latin American Integration Association|LAIA|ALADI|GSTP")
+  ) %>%
+  
+  # Limpeza adicional: Remover o par CHN-CHN (se ainda existir, fruto de Hong Kong/Macao)
+  filter(par_rta != "CHN-CHN")
+
+
+# ----------------------------------------------------------------------
+# 3. Criação da Variável Dummy Anual (Base Final)
+# ----------------------------------------------------------------------
+
+# 1. Criar Tabela Mestra (todos os pares e todos os anos)
+tabela_mestra <- expand_grid(exp = paises_iso, imp = paises_iso, year = anos_analise) %>%
+  filter(exp != imp) %>%
+  # Cria o par ordenado para o JOIN
+  rowwise() %>%
+  mutate(par_rta = paste(sort(c(exp, imp)), collapse = "-")) %>%
+  ungroup() %>%
+  distinct(par_rta, year) 
+
+# 2. Juntar a informação do RTA limpa
+base_final_com_dummy <- tabela_mestra %>%
+  left_join(rtas_limpos_final, by = "par_rta", relationship = "many-to-many") %>%
+  
+  # 3. Cria a variável DUMMY RTA
+  mutate(
+    RTA_dummy = ifelse(
+      # Se a vigência não for NA E o ano da observação for maior ou igual ao Ano_Vigencia
+      !is.na(Ano_Vigencia) & year >= Ano_Vigencia, 
+      1, 
+      0
+    )
+  ) %>%
+  
+  # 4. Limpeza final: consolida para garantir que não haja RTA_dummy duplicada no mesmo ano
+  select(par_rta, year, RTA_dummy) %>%
+  group_by(par_rta, year) %>%
+  # Se o par tiver mais de um RTA limpo, o 'max' garante que a dummy seja 1
+  summarise(RTA_dummy = max(RTA_dummy), .groups = "drop")
+
+# Visualizar a base de tratamento final
+print("Tabela Final da Dummy RTA (Pronta para JOIN):")
+head(base_final_com_dummy)
+
+
+
+```
+```{r}
+# --- 1. CALCULAR MÉDIAS DE TARIFAS DOS EUA POR EXPORTADOR E ANO ---
+
+tarifas_eua_medias_ajustadas <- tarifas_todas %>%
+  # Tratar "Free" no col1_special_text para CAN e MEX (se NAFTA/USMCA)
+  mutate(
+    # Tentativa de obter tarifa preferencial para CAN (se o texto 'Free' existir)
+    # Aqui, assumimos que se a taxa do México for 0, o Canadá provavelmente também é.
+    # Se a taxa do México for NA, usamos MFN.
+    can_ad_val_rate = case_when(
+      str_detect(col1_special_text, "CA") ~ 0.0,  # Se 'CA' (Canadá) estiver listado como Free, use 0
+      !is.na(mexico_ad_val_rate) & mexico_ad_val_rate == 0.0 ~ 0.0, # Se MEX é 0, CAN também é
+      TRUE ~ mfn_ad_val_rate # Caso contrário, usa MFN (que inclui Section 232)
+    )
+  ) %>%
+  group_by(year) %>%
+  summarise(
+    # MFN (para BRA, DEU)
+    BRA_DEU_Tariff = mean(mfn_ad_val_rate, na.rm = TRUE),
+    # Coreia (FTA)
+    KOR_Tariff = mean(korea_ad_val_rate, na.rm = TRUE),
+    # México (FTA)
+    MEX_Tariff = mean(mexico_ad_val_rate, na.rm = TRUE),
+    # Canadá (Aproximação FTA)
+    CAN_Tariff = mean(can_ad_val_rate, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  # Juntar as tarifas da Guerra Comercial EUA -> CHN
+  left_join(
+    trade_war_vars %>% select(year, us_on_china),
+    by = "year"
+  ) %>%
+  rename(CHN_Tariff = us_on_china) %>%
+  
+  # 2. CONVERTER PARA FORMATO LONGO (PARES SEPARADOS)
+  pivot_longer(
+    cols = ends_with("_Tariff"),
+    names_to = "exporter",
+    values_to = "tariff_usa"
+  ) %>%
+  mutate(
+    exporter = case_when(
+      exporter == "BRA_DEU_Tariff" ~ "MFN_GROUP",
+      exporter == "KOR_Tariff"     ~ "KOR",
+      exporter == "MEX_Tariff"     ~ "MEX",
+      exporter == "CAN_Tariff"     ~ "CAN",
+      exporter == "CHN_Tariff"     ~ "CHN",
+      TRUE ~ exporter
+    )
+  )
+
+# Duplicar a linha MFN para BRA e DEU e combinar
+tarifas_usa_final <- tarifas_eua_medias_ajustadas %>%
+  filter(exporter == "MFN_GROUP") %>%
+  mutate(exporter = "BRA") %>%
+  bind_rows(
+    filter(tarifas_eua_medias_ajustadas, exporter == "MFN_GROUP") %>% mutate(exporter = "DEU")
+  ) %>%
+  # Adicionar os países preferenciais e CHN
+  bind_rows(filter(tarifas_eua_medias_ajustadas, exporter %in% c("KOR", "MEX", "CAN", "CHN"))) %>%
+  # Finalizar
+  select(year, exporter, tariff_usa) %>%
+  filter(!is.na(tariff_usa))
+
+head(tarifas_usa_final)
+```
+```{r}
+# --- 1. PREPARAR PIB ---
+
+# Renomear para PIB do Exportador (i)
+gdp_exportador <- gdp_current %>%
+  select(iso, year, gdp_current_usd) %>%
+  rename(
+    exporter = iso,
+    gdp_exp = gdp_current_usd
+  ) %>%
+  mutate(log_gdp_exp = log(gdp_exp))
+
+# Renomear para PIB do Importador (j)
+gdp_importador <- gdp_current %>%
+  select(iso, year, gdp_current_usd) %>%
+  rename(
+    importer = iso,
+    gdp_imp = gdp_current_usd
+  ) %>%
+  mutate(log_gdp_imp = log(gdp_imp))
+
+# 2. PREPARAR DISTÂNCIA
+# (O dist_cepii que você carregou tem distw como 'chr'. Vamos converter e tirar o log)
+dist_cepii_clean <- dist_cepii %>%
+  mutate(
+    distance_km = as.numeric(gsub(",", "", distw)), # Limpar vírgulas se houver
+    log_distance = log(distance_km)
+  ) %>%
+  rename(
+    exporter = iso_o,
+    importer = iso_d
+  ) %>%
+  select(exporter, importer, contig, comlang_off, log_distance)
+
+head(dist_cepii_clean)
+```
+```{r}
+# 1. Preparar Comércio (Variável Dependente)
+# Países e código HS (72: Iron and Steel)
+paises_alvo_iso <- c("BRA", "USA", "CHN", "KOR", "DEU", "MEX", "CAN")
+anos_analise <- 2016:2022 # Até onde o PIB vai completo
+
+comercio_painel <- comtrade_x %>%
+  filter(
+    cmdCode == "72",
+    exp %in% paises_alvo_iso,
+    imp %in% paises_alvo_iso,
+    exp != imp, # Excluir comércio doméstico
+    year %in% anos_analise
+  ) %>%
+  rename(
+    exporter = exp,
+    importer = imp,
+    log_trade = fobvalue # Vamos usar o FOB Value como variável dependente
+  ) %>%
+  # Transformação logarítmica (com tratamento de 0s via PPML ou log(1+x))
+  # Para regressão OLS (mais simples), use log(1+x)
+  mutate(log_trade = log(1 + log_trade)) %>%
+  select(year, exporter, importer, log_trade)
+
+
+# 2. Mesclar PIB, Distância e Dummies de Gravidade
+
+gravity_panel <- comercio_painel %>%
+  # Adicionar PIB do Exportador
+  left_join(gdp_exportador, by = c("year", "exporter")) %>%
+  # Adicionar PIB do Importador
+  left_join(gdp_importador, by = c("year", "importer")) %>%
+  # Adicionar Variáveis Geográficas (Não Variam no Tempo)
+  left_join(dist_cepii_clean, by = c("exporter", "importer"))
+
+# 3. Adicionar Variáveis de Tratamento (Tarifas e RTA)
+
+# A. Adicionar Tarifa do Importador (A Tarifa que o Importador cobra do Exportador)
+# NOTA: O principal importador com tarifas variáveis na sua amostra é o USA.
+# Criar a coluna 'tariff_rate' (Tarifa do Importador)
+gravity_panel <- gravity_panel %>%
+  left_join(
+    # Focar na Tarifa dos EUA (onde o Importador é o USA)
+    tarifas_usa_final, 
+    by = c("year", "exporter")
+  ) %>%
+  mutate(
+    # Aplicar a Tarifa EUA se o importador for USA, senão NA
+    tariff_rate = if_else(importer == "USA", tariff_usa, NA_real_) 
+    # Para outros importadores (BRA, CHN, DEU, etc.), a tarifa deve vir de outra fonte (MFN do importador, etc.)
+    # Você pode adicionar as tarifas MFN do seu dataframe do Banco Mundial aqui, se necessário.
+  ) %>%
+  select(-tariff_usa) # Remover coluna auxiliar
+
+# B. Adicionar Dummy de RTA (Acordo Regional de Comércio)
+# Nota: Você precisa criar o par ordenado para o join RTA.
+gravity_panel_final <- gravity_panel %>%
+  rowwise() %>%
+  mutate(
+    par_rta = paste(sort(c(exporter, importer)), collapse = "-")
+  ) %>%
+  ungroup() %>%
+  left_join(
+    # Já está agrupado por par_rta e ano na sua base
+    base_final_com_dummy %>% select(par_rta, year, RTA_dummy), 
+    by = c("par_rta", "year")
+  ) %>%
+  # Se não houver RTA registrado, é 0 (mas o left_join pode trazer NA; tratamos aqui)
+  mutate(RTA_dummy = replace_na(RTA_dummy, 0)) %>%
+  select(-par_rta) # Retirar coluna auxiliar
+
+# Transformar variáveis contínuas que serão usadas na regressão para log
+gravity_panel_final <- gravity_panel_final %>%
+  mutate(
+    log_tariff_rate = log(1 + tariff_rate) # Log(1+x) para tarifas
+  )
+  
+head(gravity_panel_final)
+```
+
+
+```{r}
+# Importante: A sua variável de comércio (log_trade) foi baseada no 'fobvalue' original.
+# Vou recriar a coluna de valor de comércio sem o log para o PPML.
+
+paises_alvo_iso <- c("BRA", "USA", "CHN", "KOR", "DEU", "MEX", "CAN")
+anos_analise <- 2016:2022
+
+comercio_ppml <- comtrade_x %>%
+  filter(
+    cmdCode == "72",
+    exp %in% paises_alvo_iso,
+    imp %in% paises_alvo_iso,
+    exp != imp,
+    year %in% anos_analise
+  ) %>%
+  rename(
+    exporter = exp,
+    importer = imp,
+    trade_value = fobvalue # Variável dependente no PPML
+  ) %>%
+  select(year, exporter, importer, trade_value)
+
+# Refazendo a Mesclagem para garantir o trade_value correto (não log)
+# (Usando gravity_panel, que tinha todas as outras variáveis prontas)
+
+gravity_panel_ppml <- comercio_ppml %>%
+  # Adicionar PIB do Exportador (em log)
+  left_join(gdp_exportador, by = c("year", "exporter")) %>%
+  # Adicionar PIB do Importador (em log)
+  left_join(gdp_importador, by = c("year", "importer")) %>%
+  # Adicionar Variáveis Geográficas (em log, se for distância)
+  left_join(dist_cepii_clean, by = c("exporter", "importer")) %>%
+  # Adicionar Tarifas e RTA
+  left_join(
+    tarifas_usa_final,
+    by = c("year", "exporter")
+  ) %>%
+  mutate(
+    tariff_rate = if_else(importer == "USA", tariff_usa, NA_real_)
+  ) %>%
+  select(-tariff_usa) %>%
+  # Adicionar Dummy RTA e log_tariff
+  rowwise() %>%
+  mutate(
+    par_rta = paste(sort(c(exporter, importer)), collapse = "-")
+  ) %>%
+  ungroup() %>%
+  left_join(
+    base_final_com_dummy %>% select(par_rta, year, RTA_dummy),
+    by = c("par_rta", "year")
+  ) %>%
+  mutate(
+    RTA_dummy = replace_na(RTA_dummy, 0),
+    log_tariff_rate = log(1 + tariff_rate),
+    pair_id = paste0(exporter, "_", importer) # Par ID para Cluster/FE
+  ) %>%
+  select(-par_rta) %>%
+  drop_na(log_gdp_exp, log_gdp_imp) # Remover observações sem dados de PIB (massa econômica)
+```
+
+
+```{r}
+# 1. Carregar o pacote
+library(fixest)
+library(dplyr)
+
+# 2. Estimação PPML com Efeitos Fixos Duplos de País-Ano
+# (Ajuste: O 'ssc' foi removido e o agrupamento foi movido para 'vcov' ou 'cluster')
+
+# Modelo 1: Efeitos Fixos de País-Ano
+modelo_ppml_1 <- fepois(
+  trade_value ~ log_tariff_rate + RTA_dummy | exporter[year] + importer[year],
+  data = gravity_panel_ppml,
+  # CORREÇÃO: Passamos o agrupamento diretamente para o argumento cluster
+  cluster = ~pair_id # Agrupamento no Par (Exportador-Importador)
+)
+
+# Modelo 2: Efeitos Fixos de Par + Ano
+modelo_ppml_2 <- fepois(
+  trade_value ~ log_gdp_exp + log_gdp_imp + log_tariff_rate + RTA_dummy | pair_id + year,
+  data = gravity_panel_ppml,
+  # CORREÇÃO: Agrupamento no Par
+  cluster = ~pair_id 
+)
+
+# 3. Visualização dos Resultados
+etable(
+  modelo_ppml_1, 
+  modelo_ppml_2,
+  headers = list(
+    Modelo = c("PPML FE País x Ano", "PPML FE Par + Ano"),
+    Absorve = c("PIBs e Distância", "Distância e Fatores Invariantes")
+  ),
+  signif.code = c("***"=0.01, "**"=0.05, "*"=0.10)
+)
+```
+
+```{r}
+library(dplyr)
+library(fixest)
+
+# Definindo o ano do Choque e as Dummies de País
+CHOQUE_YEAR <- 2018
+
+gravity_panel_final_diid <- gravity_panel_ppml %>%
+  # --- Variáveis Base ---
+  mutate(
+    # 1. Dummy Pós-Choque: 1 para anos de 2018 em diante
+    post_2018 = if_else(year >= CHOQUE_YEAR, 1, 0),
+    
+    # 2. Dummy Exportador China (CHN)
+    is_china = if_else(exporter == "CHN", 1, 0),
+    
+    # 3. Dummy Exportador Brasil (BRA)
+    is_brazil = if_else(exporter == "BRA", 1, 0),
+    
+    # 4. Dummy Importador EUA (USA)
+    is_usa_imp = if_else(importer == "USA", 1, 0)
+  ) %>%
+  
+  # --- Variáveis de Efeito (Tratamento/Desvio) ---
+  mutate(
+    # A. Variável de Choque na Tarifa (Efeito da Guerra China -> EUA)
+    # Tese: A tarifa de guerra na China (acima do MFN) reduz o comércio CHN->EUA.
+    # Usamos o log da tarifa apenas quando Importador=USA e Exportador=CHN (e pós-choque).
+    # Como log_tariff_rate já é NA para outros fluxos, filtramos apenas por CHN e Pós-2018.
+    
+    # Esta variável captura a Tarifa Punitiva APENAS no fluxo CHN -> EUA
+    tariff_shock_china = log_tariff_rate * is_china * is_usa_imp,
+    
+    # B. Variável de Desvio/Impacto no Brasil
+    # Tese: O Brasil se beneficia (ou é prejudicado) da incerteza global/guerra.
+    # Mede a mudança nas exportações do Brasil para TODOS os parceiros após 2018.
+    brazil_post_shock = post_2018 * is_brazil
+    
+    # C. (Opcional, mas útil): Interação Brasil x EUA (Choque do Seção 232)
+    # Tese: Brasil foi afetado de forma diferente nos EUA (por causa da Seção 232).
+    # brazil_usa_post_shock = post_2018 * is_brazil * is_usa_imp
+  )
+```
+
+```{r}
+# Garantir que o fixest está carregado
+library(fixest)
+
+# Estimação PPML com as Variáveis de Interação
+modelo_ppml_diid <- fepois(
+  trade_value ~ 
+    # Efeito 1: Impacto da Tarifa de Guerra China -> EUA (espera-se sinal negativo)
+    tariff_shock_china + 
+    
+    # Efeito 2: Mudança nas Exportações do Brasil Pós-Guerra (Desvio de Comércio - sinal incerto)
+    brazil_post_shock 
+    
+    # Variáveis Absorvidas: PIB, Distância, RTA (não-variante), Tarifa MFN básica
+    | exporter[year] + importer[year],
+  
+  data = gravity_panel_final_diid,
+  cluster = ~pair_id # Cluster Standard Errors no Par
+)
+
+# Visualização dos Resultados
+etable(
+  modelo_ppml_diid, 
+  headers = list(
+    Modelo = c("PPML DiD - Choque de Tarifa e Desvio (FE País x Ano)")
+  ),
+  signif.code = c("***"=0.01, "**"=0.05, "*"=0.10)
+)
+```
+```{r}
+# Garantindo que o fixest está carregado
+library(dplyr)
+library(fixest)
+
+CHOQUE_YEAR <- 2018
+
+# --- Criação das Dummies de Desvio por País ---
+gravity_panel_beneficio <- gravity_panel_ppml %>%
+  mutate(
+    post_2018 = if_else(year >= CHOQUE_YEAR, 1, 0),
+    is_china = if_else(exporter == "CHN", 1, 0),
+    is_brazil = if_else(exporter == "BRA", 1, 0)
+  ) %>%
+  
+  # A. Choque na Tarifa China -> EUA (Controle)
+  mutate(
+    is_usa_imp = if_else(importer == "USA", 1, 0),
+    tariff_shock_china = log_tariff_rate * is_china * is_usa_imp
+  ) %>%
+  
+  # B. Criação das Dummies de Desvio/Choque para cada país "neutro"
+  # O fés absorverá a dummy pós-2018 (FE de Ano) e a dummy is_i (FE de Exportador), 
+  # portanto, precisamos da interação.
+  mutate(
+    shock_brazil = post_2018 * if_else(exporter == "BRA", 1, 0),
+    shock_korea = post_2018 * if_else(exporter == "KOR", 1, 0),
+    shock_mexico = post_2018 * if_else(exporter == "MEX", 1, 0),
+    shock_canada = post_2018 * if_else(exporter == "CAN", 1, 0),
+    shock_germany = post_2018 * if_else(exporter == "DEU", 1, 0)
+    # A China é tratada pela variável de tarifa
+  )
+
+# Estimação PPML para Desvio de Comércio
+# Incluímos as Dummies de Choque de cada país.
+modelo_ppml_beneficio <- fepois(
+  trade_value ~ 
+    # 1. Variável de Tratamento da China
+    tariff_shock_china + 
+    
+    # 2. Dummies de Choque para cada país neutro/alvo (Desvio de Comércio)
+    shock_brazil + shock_korea + shock_mexico + shock_canada + shock_germany
+    
+    # Efeitos Fixos mais robustos
+    | exporter[year] + importer[year],
+  
+  data = gravity_panel_beneficio,
+  cluster = ~pair_id # Cluster Standard Errors no Par
+)
+
+# Visualização dos Resultados
+etable(
+  modelo_ppml_beneficio, 
+  headers = list(
+    Modelo = c("PPML Desvio de Comércio (Pós-2018)")
+  ),
+  # Renomeando as variáveis para facilitar a interpretação na tabela
+  dict = c(
+    tariff_shock_china = "ln(Tarifa Guerra) x CHN",
+    shock_brazil = "Pós-2018 x BRAZIL",
+    shock_korea = "Pós-2018 x COREIA",
+    shock_mexico = "Pós-2018 x MÉXICO",
+    shock_canada = "Pós-2018 x CANADÁ",
+    shock_germany = "Pós-2018 x ALEMANHA"
+  ),
+  signif.code = c("***"=0.01, "**"=0.05, "*"=0.10)
+)
+```
+
+
+
+```{r}
+# Garantindo que o fixest está carregado
+library(dplyr)
+library(fixest)
+
+CHOQUE_YEAR <- 2018
+
+# --- 1. Filtrar e Criar Variáveis para o Choque Chinês ---
+panel_china_flow <- gravity_panel_ppml %>%
+  filter(exporter == "CHN") %>% # Focar apenas nas exportações da China
+  mutate(
+    post_2018 = if_else(year >= CHOQUE_YEAR, 1, 0),
+    
+    # Criar uma dummy de tratamento para os "Mercados de Desvio" (todos, exceto o EUA)
+    is_diversion_market = if_else(importer != "USA", 1, 0),
+    
+    # Variável Chave: Efeito Pós-Guerra x Mercado de Desvio
+    # Mede se as exportações da China para NÃO-EUA aumentaram após 2018.
+    china_diversion_shock = post_2018 * is_diversion_market
+  )
+
+# --- 2. Estimação PPML: Desvio da China ---
+# Usamos FE de Importador-Ano para controlar a demanda (ex: PIB do Brasil) e FE de Exportador
+# (que é a China) para controlar a oferta.
+modelo_china_desvio <- fepois(
+  trade_value ~ 
+    # Variável de interesse: Se o comércio da China com NÃO-EUA (incluindo o Brasil) mudou pós-2018.
+    china_diversion_shock
+    
+    # FE de Exportador (China) e FE de Importador-Ano (controla a demanda e PIB de cada parceiro)
+    | exporter + importer[year], 
+    
+  data = panel_china_flow,
+  cluster = ~importer # Clusterização pelo Importador
+)
+
+# --- 3. Rodar e Interpretar ---
+# Se o coeficiente de 'china_diversion_shock' for POSITIVO e SIGNIFICATIVO, você prova
+# que a China redirecionou seu excedente para esses mercados (incluindo o Brasil).
+
+etable(
+  modelo_china_desvio,
+  headers = list(
+    Modelo = c("PPML Desvio da China para Mercados Neutros")
+  ),
+  dict = c(china_diversion_shock = "Pós-2018 x Mercados de Desvio (incl. BRA)"),
+  signif.code = c("***"=0.01, "**"=0.05, "*"=0.10)
+)
+```
+
+
+
+
+```{r}
+library(dplyr)
+library(fixest)
+
+CHOQUE_YEAR <- 2018
+
+# --- 1. Filtrar e Criar Variáveis para o Choque Chinês (Aprofundado) ---
+panel_china_flow_detalhe <- gravity_panel_ppml %>%
+  filter(exporter == "CHN") %>% # Focar apenas nas exportações da China
+  mutate(
+    post_2018 = if_else(year >= CHOQUE_YEAR, 1, 0),
+    is_usa_imp = if_else(importer == "USA", 1, 0),
+    is_bra_imp = if_else(importer == "BRA", 1, 0),
+    is_rest_imp = if_else(importer %in% c("DEU", "CAN", "MEX", "KOR"), 1, 0)
+  ) %>%
+  
+  # Variáveis Chave:
+  mutate(
+    # 1. Choque EUA: Variável da tarifa (Controle do tratamento direto)
+    tariff_shock_china_usa = log_tariff_rate * is_usa_imp,
+    
+    # 2. Choque Brasil: Se o comércio China -> Brasil mudou Pós-2018.
+    # O coeficiente será a mudança média nesse fluxo (Interesse principal).
+    shock_china_to_bra = post_2018 * is_bra_imp,
+
+    # 3. Choque Resto do Mundo: Mudança média para o grupo de países neutros (sem Brasil e EUA).
+    shock_china_to_rest = post_2018 * is_rest_imp
+  )
+```
+
+```{r} 
+# Estimação PPML Detalhada: Exportações da China (CHN)
+modelo_china_detalhe <- fepois(
+  trade_value ~ 
+    # Variável 1: Tratamento Direto (Tarifa EUA)
+    tariff_shock_china_usa + 
+    
+    # Variável 2: Mudança no Fluxo China -> BRASIL
+    shock_china_to_bra + 
+    
+    # Variável 3: Mudança no Fluxo China -> OUTROS PAÍSES NEUTROS
+    shock_china_to_rest
+    
+    # FE: Exportador (China) absorvido, mas mantemos Importador x Ano para controle de demanda
+    | exporter + importer[year], 
+    
+  data = panel_china_flow_detalhe,
+  cluster = ~importer # Clusterização pelo Importador
+)
+
+# Visualização dos Resultados
+etable(
+  modelo_china_detalhe,
+  headers = list(
+    Modelo = c("PPML Contração: Fluxo Exportação da China (CHN)")
+  ),
+  dict = c(
+    tariff_shock_china_usa = "ln(Tarifa Guerra) x EUA",
+    shock_china_to_bra = "Pós-2018 x BRASIL",
+    shock_china_to_rest = "Pós-2018 x OUTROS (DEU, MEX, CAN, KOR)"
+  ),
+  signif.code = c("***"=0.01, "**"=0.05, "*"=0.10)
+)
+```
+
+```{r}
+# 1. Ajustar o dataframe (Assumindo que panel_china_flow_detalhe está na memória)
+
+# A variável 'tariff_shock_china_usa' tem NA nos fluxos não-EUA.
+# O erro "NA values in 'x'" na matriz VCV é frequentemente porque o FE não consegue absorver
+# a parte não-NA da variável que está causando a colinearidade.
+# Vamos substituir os NAs por 0s nas variáveis de choque, pois o log(1+NA) resultou em NA.
+
+panel_china_flow_detalhe <- panel_china_flow_detalhe %>%
+  mutate(
+    # Garante que NAs na tarifa de choque (que só deve ser aplicada no USA) sejam 0
+    tariff_shock_china_usa = replace_na(tariff_shock_china_usa, 0),
+    # O FE absorve o FE de Importador x Ano para os demais fatores
+  )
+
+# 2. Estimação PPML: Foco na Demanda (FE de Importador x Ano)
+# Removemos o FE de Exportador[year] para evitar a redundância.
+
+modelo_china_detalhe_corrigido <- fepois(
+  trade_value ~ 
+    # Variável 1: Tratamento Direto (Tarifa EUA)
+    tariff_shock_china_usa + 
+    
+    # Variável 2: Mudança no Fluxo China -> BRASIL
+    shock_china_to_bra + 
+    
+    # Variável 3: Mudança no Fluxo China -> OUTROS PAÍSES NEUTROS
+    shock_china_to_rest
+    
+    # FE: Mantemos apenas o FE de Importador x Ano, que é o que varia e identifica a demanda de cada parceiro.
+    # O FE de Exportador (China) é apenas uma constante, absorvido pelo FE de Importador (parceiro).
+    | importer[year], 
+    
+  data = panel_china_flow_detalhe,
+  cluster = ~importer # Clusterização pelo Importador (que é o que varia)
+)
+
+# 3. Visualização dos Resultados
+etable(
+  modelo_china_detalhe_corrigido,
+  headers = list(
+    Modelo = c("PPML Contração: Fluxo CHN (Corrigido)")
+  ),
+  dict = c(
+    tariff_shock_china_usa = "ln(Tarifa Guerra) x EUA",
+    shock_china_to_bra = "Pós-2018 x BRASIL",
+    shock_china_to_rest = "Pós-2018 x OUTROS (DEU, MEX, CAN, KOR)"
+  ),
+  signif.code = c("***"=0.01, "**"=0.05, "*"=0.10)
+)
+```
+```{r}
+library(ggplot2)
+library(dplyr)
+library(scales) # Para formatar o eixo Y como porcentagem
+
+# 1. Preparar dados do fluxo China -> EUA
+tariff_data_china_usa <- gravity_panel_ppml %>%
+  filter(exporter == "CHN", importer == "USA") %>%
+  # A tarifa é o log(1+taxa), mas vamos usar a taxa original para o gráfico
+  mutate(tariff_rate_percent = tariff_rate * 100) %>%
+  select(year, tariff_rate_percent) %>%
+  distinct() # Garantir que cada ano tenha apenas uma observação
+
+# 2. Gerar o gráfico
+grafico_tarifa <- ggplot(tariff_data_china_usa, aes(x = year, y = tariff_rate_percent)) +
+  geom_line(size = 1.2, color = "#B22222") + # Vermelho Tijolo para Tarifa
+  geom_point(size = 3, color = "#B22222") +
+  geom_vline(xintercept = 2018, linetype = "dashed", color = "gray50") +
+  
+  # Rótulos e Títulos
+  labs(
+    title = "Choque da Guerra Comercial: Tarifa Média dos EUA sobre o Aço Chinês (HS 72)",
+    subtitle = "Aumento abrupto em 2018/2019 marca o início da Seção 301.",
+    x = "Ano",
+    y = "Tarifa Ad Valorem (%)",
+    caption = "Fonte: USITC e trade_war_vars (processado)."
+  ) +
+  
+  # Anotação do Choque
+  annotate("text", x = 2018.1, y = max(tariff_data_china_usa$tariff_rate_percent, na.rm = TRUE) * 0.9, 
+           label = "Início da Guerra Comercial (Seção 301)", 
+           angle = 90, hjust = 0, color = "gray30", size = 3.5) +
+           
+  # Tema e Escalas
+  scale_y_continuous(labels = label_percent(scale = 1)) +
+  scale_x_continuous(breaks = min(tariff_data_china_usa$year):max(tariff_data_china_usa$year)) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+
+print(grafico_tarifa)
+```
+
+
+```{r}
+# 1. Preparar dados de Desvio/Contração (em Bilhões de US$)
+trade_flow_analysis <- gravity_panel_ppml %>%
+  group_by(year) %>%
+  summarise(
+    # Fluxo 1: Tratamento Direto (China -> EUA)
+    China_to_USA = sum(trade_value[exporter == "CHN" & importer == "USA"], na.rm = TRUE) / 1e9,
+    
+    # Fluxo 2: Contração/Desvio da China (China -> Outros Mercados)
+    China_to_Others = sum(trade_value[exporter == "CHN" & importer != "USA"], na.rm = TRUE) / 1e9,
+    
+    # Fluxo 3: Dano Colateral (Brasil -> Mundo - seus parceiros na amostra)
+    Brazil_to_World = sum(trade_value[exporter == "BRA"], na.rm = TRUE) / 1e9,
+    .groups = 'drop'
+  ) %>%
+  
+  # Converter para formato Longo para o ggplot2
+  tidyr::pivot_longer(
+    cols = ends_with(c("_USA", "_Others", "_World")),
+    names_to = "Flow_Type",
+    values_to = "Trade_Value_Billion_USD"
+  ) %>%
+  mutate(
+    Flow_Type = factor(Flow_Type, levels = c("China_to_USA", "China_to_Others", "Brazil_to_World"),
+                       labels = c("China → EUA (Tratamento)", 
+                                  "China → Outros (Contração Global)", 
+                                  "Brasil → Mundo (Dano Colateral)")
+                       )
+  )
+
+# 2. Gerar o gráfico
+grafico_efeito_domino <- ggplot(trade_flow_analysis, aes(x = year, y = Trade_Value_Billion_USD, color = Flow_Type)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = 2018, linetype = "dashed", color = "gray50") +
+  
+  # Destaque para a Queda
+  geom_segment(data = filter(trade_flow_analysis, Flow_Type == "China → Outros (Contração Global)", year == 2018),
+               aes(x = 2018, xend = 2022, y = Trade_Value_Billion_USD, yend = filter(trade_flow_analysis, Flow_Type == "China → Outros (Contração Global)", year == 2022)$Trade_Value_Billion_USD), 
+               arrow = arrow(length = unit(0.3, "cm"), ends = "last"), color = "#1E90FF", size = 0.8) +
+  
+  # Rótulos e Títulos
+  labs(
+    title = "Efeito Dominó da Guerra Comercial no Comércio de Aço (2016-2022)",
+    subtitle = "Tendências de valor de comércio que explicam a refutação do Desvio de Comércio.",
+    x = "Ano",
+    y = "Valor do Comércio (Bilhões de US$)",
+    color = "Fluxo de Comércio",
+    caption = "Fonte: Comtrade (processado). Contração de -34% no fluxo China → Outros Pós-2018."
+  ) +
+  
+  # Tema e Escalas
+  scale_color_manual(values = c("China → EUA (Tratamento)" = "#B22222", 
+                                "China → Outros (Contração Global)" = "#1E90FF",
+                                "Brasil → Mundo (Dano Colateral)" = "#228B22")) +
+  scale_x_continuous(breaks = min(trade_flow_analysis$year):max(trade_flow_analysis$year)) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = "bottom")
+
+print(grafico_efeito_domino)
+```
+
+```{r}
+
+reerpath <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2\\reer.csv"
+
+reer <- read_csv(reerpath)
+
+library(tidyverse)
+library(dplyr)
+
+# 1. Remover metadados e selecionar apenas as linhas de dados (as primeiras 6 na sua amostra)
+reer_clean <- reer %>%
+  slice(1:7) %>%  # Mantém apenas as 6 linhas de dados (BRA, CAN, CHN, KOR, USA, MEX)
+  
+  # 2. Selecionar as colunas de interesse (Código do País e Anos de 2016 a 2022)
+  select(
+    `Country Code`,
+    matches("201[6-9]"),  # Colunas de 2016 a 2019
+    matches("202[0-2]")   # Colunas de 2020 a 2022
+  ) %>%
+  rename(iso = `Country Code`)
+
+# 3. Converter para o formato longo (long format)
+reer_long <- reer_clean %>%
+  pivot_longer(
+    cols = -iso,
+    names_to = "year_label",
+    values_to = "reer_value"
+  ) %>%
+  mutate(
+    # Extrair o ano da string (e.g., "2016 [YR2016]" -> 2016)
+    year = as.integer(str_extract(year_label, "\\d{4}")),
+    # Converter o valor do REER para numérico, tratando ".." como NA
+    reer_value = suppressWarnings(as.numeric(reer_value))
+  ) %>%
+  filter(!is.na(reer_value)) %>%
+  
+  # 4. Criar a variável em log (essencial para o modelo gravitacional)
+  mutate(log_reer = log(reer_value)) %>%
+  select(iso, year, log_reer)
+  
+# Seus países da amostra são BRA, USA, CHN, KOR, DEU, MEX, CAN
+# O REER da Alemanha (DEU) deve ser representado pela União Europeia (EU) ou pelo Euro. 
+# Se o seu REER não contém 'DEU'/'EU', assumiremos que está faltando, mas o modelo ainda pode ser executado.
+
+head(reer_long)
+```
+
+```{r}
+# 1. Renomear para REER do Exportador (i)
+reer_exportador <- reer_long %>% 
+    rename(exporter = iso, log_reer_exp = log_reer)
+
+# 2. Renomear para REER do Importador (j)
+reer_importador <- reer_long %>% 
+    rename(importer = iso, log_reer_imp = log_reer)
+
+# 3. Mesclar no Painel Final
+gravity_panel_reer <- gravity_panel_ppml %>%
+    # Mesclar REER do Exportador
+    left_join(reer_exportador, by = c("exporter", "year")) %>%
+    # Mesclar REER do Importador
+    left_join(reer_importador, by = c("importer", "year")) %>%
+    
+    # Criar a variável DiD do Brasil de novo, garantindo que o REER não a sobreponha
+    mutate(
+        pair_id = paste0(exporter, "_", importer) # Garante que pair_id está atualizado
+    )
+
+# Conferir o novo dataframe
+# dplyr::glimpse(gravity_panel_reer)
+```
+
+```{r}
+library(dplyr)
+library(fixest)
+
+CHOQUE_YEAR <- 2018
+
+# --- 1. Recriar Variáveis de Choque no Dataframe REER ---
+
+gravity_panel_reer_final <- gravity_panel_reer %>%
+  # VAMOS CRIAR AS VARIÁVEIS DE CHOQUE QUE ESTAVAM FALTANDO:
+  mutate(
+    # Variáveis Base
+    post_2018 = if_else(year >= CHOQUE_YEAR, 1, 0),
+    is_china = if_else(exporter == "CHN", 1, 0),
+    is_brazil = if_else(exporter == "BRA", 1, 0),
+    is_usa_imp = if_else(importer == "USA", 1, 0),
+    
+    # Variáveis de Choque para a Regressão
+    tariff_shock_china_usa = log_tariff_rate * is_china * is_usa_imp,
+    shock_china_to_bra = post_2018 * if_else(exporter == "CHN" & importer == "BRA", 1, 0),
+    
+    # Choque para o RESTO do grupo (DEU, CAN, MEX, KOR)
+    is_rest_imp = if_else(importer %in% c("DEU", "CAN", "MEX", "KOR"), 1, 0),
+    shock_china_to_rest = post_2018 * if_else(exporter == "CHN" & is_rest_imp == 1, 1, 0)
+  ) %>%
+  
+  # Remover observações com NA no REER (necessário para o modelo)
+  drop_na(log_reer_exp, log_reer_imp)
+
+# --- 2. Estimação PPML: Foco na Demanda (FE de Importador x Ano) ---
+
+modelo_ppml_reer <- fepois(
+  trade_value ~ 
+    # Variáveis de Massa e Competitividade
+    log_gdp_exp + log_gdp_imp + 
+    log_reer_exp + log_reer_imp +
+    
+    # Variáveis de Choque (DiD)
+    tariff_shock_china_usa + 
+    shock_china_to_bra + 
+    shock_china_to_rest
+    
+    # Efeitos Fixos: Pair ID (absorve Distância/RTA) + Ano (absorve choques anuais globais)
+    | pair_id + year, 
+    
+  data = gravity_panel_reer_final,
+  cluster = ~pair_id 
+)
+
+# 3. Comparação Final (Com um modelo mais robusto de referência)
+# Vamos rodar um modelo de referência comparável (FE País x Ano) com as mesmas variáveis de choque
+modelo_ppml_referencia_reer <- fepois(
+  trade_value ~ 
+    # Sem PIB e REER (serão absorvidos)
+    tariff_shock_china_usa + 
+    shock_china_to_bra + 
+    shock_china_to_rest
+    | exporter[year] + importer[year], 
+    
+  data = gravity_panel_reer_final,
+  cluster = ~pair_id 
+)
+
+
+# 4. Visualização dos Resultados
+etable(
+  modelo_ppml_referencia_reer,  # Modelo Robusto (FE País x Ano)
+  modelo_ppml_reer,             # Modelo de Sensibilidade (FE Par + REER/PIB)
+  headers = list(
+    Modelo = c("Referência (FE País x Ano)", "Sensibilidade (FE Par + REER/PIB)"),
+    Variáveis = c("Controle Máximo (Absorve REER/PIB)", "Estima REER/PIB (Sensibilidade)")
+  ),
+  dict = c(
+    tariff_shock_china_usa = "ln(Tarifa Guerra) x EUA",
+    shock_china_to_bra = "Pós-2018 x CHINA->BRASIL",
+    shock_china_to_rest = "Pós-2018 x CHINA->OUTROS",
+    log_gdp_exp = "ln(PIB Exportador)",
+    log_gdp_imp = "ln(PIB Importador)",
+    log_reer_exp = "ln(REER Exportador)",
+    log_reer_imp = "ln(REER Importador)"
+  ),
+  signif.code = c("***"=0.01, "**"=0.05, "*"=0.10)
+)
+```
+
+
