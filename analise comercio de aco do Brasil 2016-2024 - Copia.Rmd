@@ -1,0 +1,562 @@
+---
+title: "Comercio Brasileiro de Aco - Analise Visual (2016-2024)"
+author: "Julia Teixeira"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    theme: flatly
+    source_code: embed
+---
+
+```{r setup, include=FALSE}
+# Pacotes necessários
+library(flexdashboard)
+library(tidyverse)
+library(readxl)
+library(plotly)
+library(DT)
+library(leaflet)
+library(scales)
+
+# Configuração
+options(scipen = 999)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+base_dir <- "C:\\Users\\julia\\OneDrive\\Documentos\\FGV\\TCC 2"
+
+# Países da amostra
+sample_iso <- c("BRA", "CHN", "USA", "MEX", "CAN", "KOR", "DEU", "TUR", "JPN", "IND")
+
+# Nomes dos países
+country_names <- c(
+ "BRA" = "Brasil", "CHN" = "China", "USA" = "Estados Unidos",
+ "MEX" = "México", "CAN" = "Canadá", "KOR" = "Coreia do Sul",
+ "DEU" = "Alemanha", "TUR" = "Turquia", "JPN" = "Japão", "IND" = "Índia"
+)
+
+geo_cepii_path <- file.path(base_dir, "geo_cepii.xls")
+
+
+# Carregar dados geográficos do CEPII
+geo_cepii <- read_excel(geo_cepii_path)
+  
+# Filtrar países da amostra (apenas capitais: cap == 1)
+country_coords <- geo_cepii %>%
+  filter(iso3 %in% sample_iso, cap == 1) %>%
+  mutate(country_name = country_names[iso3]) %>%
+  select(
+    iso = iso3,
+    lat = lat,
+    lng = lon,
+    country_name
+    )
+
+# CARREGAMENTO DOS DADOS DESAGREGADOS
+
+# Lista de arquivos desagregados (HS 4 dígitos)
+comtrade_files <- c(
+  "comtrade 7201-7210.csv",
+  "comtrade 7211-7220.csv",
+  "comtrade 7221-7229.csv",
+  "comtrade 7301-7310.csv",
+  "comtrade 7311-7320.csv",
+  "comtrade 7321-7326.csv"
+)
+
+# Função para ler cada arquivo
+read_comtrade_file <- function(filename) {
+  filepath <- file.path(base_dir, filename)
+  
+  df <- read_csv(filepath,
+                 col_types = cols(.default = col_character()),
+                 na = c("", "N/A", "NA"),
+                 show_col_types = FALSE) %>%
+    mutate(
+      refYear = as.numeric(refYear),
+      fobvalue = as.numeric(fobvalue),
+      cifvalue = as.numeric(cifvalue),
+      netWgt = as.numeric(netWgt),
+      cmdCode = as.character(cmdCode)
+    ) %>%
+    select(refYear, reporterISO, partnerISO, flowCode, 
+           fobvalue, cifvalue, netWgt, cmdCode) %>%
+    distinct()
+  
+  return(df)
+}
+
+# Ler todos os arquivos
+comtrade_list <- list()
+for(file in comtrade_files) {
+  df <- read_comtrade_file(file)
+  if(!is.null(df)) {
+    comtrade_list[[file]] <- df
+  }
+}
+
+# Consolidar
+comtrade_raw <- bind_rows(comtrade_list)
+
+# Processar dados de comércio
+trade_data <- comtrade_raw %>%
+  filter(
+    reporterISO %in% sample_iso,
+    partnerISO %in% sample_iso,
+    reporterISO != partnerISO,
+    refYear >= 2016,
+    refYear <= 2024
+  ) %>%
+  mutate(
+    trade_value = case_when(
+      flowCode == "X" & !is.na(fobvalue) ~ fobvalue,
+      flowCode == "M" & !is.na(cifvalue) ~ cifvalue,
+      flowCode == "M" & is.na(cifvalue) & !is.na(fobvalue) ~ fobvalue,
+      flowCode == "X" & is.na(fobvalue) & !is.na(cifvalue) ~ cifvalue,
+      TRUE ~ NA_real_
+    ),
+    trade_quantity_tons = ifelse(!is.na(netWgt) & netWgt > 0, netWgt / 1000, NA_real_),
+    exporter = ifelse(flowCode == "X", reporterISO, partnerISO),
+    importer = ifelse(flowCode == "X", partnerISO, reporterISO),
+    hs_chapter = substr(cmdCode, 1, 2),
+    produto = ifelse(hs_chapter == "72", "HS 72 - Básicos", "HS 73 - Manufaturados")
+  ) %>%
+  filter(!is.na(trade_value), trade_value > 0, exporter != importer) %>%
+  select(year = refYear, exporter, importer, hs_chapter, produto, trade_value, trade_quantity_tons) %>%
+  group_by(year, exporter, importer, hs_chapter, produto) %>%
+  summarise(
+    trade_value = sum(trade_value, na.rm = TRUE),
+    trade_quantity_tons = sum(trade_quantity_tons, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# DADOS DE PRODUÇÃO (World Steel Association)
+steel_path <- file.path(base_dir, "total_prod_cruse_steel_2016_2014.xlsx")
+steel_production <- read_excel(steel_path, skip = 2)
+first_col <- colnames(steel_production)[1]
+steel_production <- steel_production %>%
+  rename(country = !!sym(first_col)) %>%
+  pivot_longer(cols = -country, names_to = "year", values_to = "production_kt") %>%
+  mutate(year = as.numeric(year), production_kt = as.numeric(production_kt)) %>%
+  filter(!is.na(year), year >= 2016, year <= 2024)
+
+country_mapping <- c(
+  "Brazil" = "BRA", "China" = "CHN", "United States" = "USA",
+  "Mexico" = "MEX", "Canada" = "CAN", "South Korea" = "KOR",
+  "Germany" = "DEU", "Türkiye" = "TUR", "Turkey" = "TUR",
+  "Japan" = "JPN", "India" = "IND"
+)
+
+world_production <- steel_production %>%
+  filter(country == "World") %>%
+  select(year, world_production_kt = production_kt)
+
+production_data <- steel_production %>%
+  mutate(iso = country_mapping[country]) %>%
+  filter(!is.na(iso), iso %in% sample_iso) %>%
+  left_join(world_production, by = "year") %>%
+  mutate(
+    # Os dados da World Steel estão em milhares de toneladas (kt)
+    # Dividir por 1000 para obter milhões de toneladas (Mt)
+    production_mt = production_kt / 1000,
+    world_production_mt = world_production_kt / 1000,
+    pct_world = (production_kt / world_production_kt) * 100,
+    country_name = country_names[iso]
+  ) %>%
+  filter(!is.na(country_name))
+
+
+# DATASETS DERIVADOS
+
+# Exportações do Brasil
+exports_brasil <- trade_data %>%
+  filter(exporter == "BRA", importer != "BRA") %>%
+  mutate(
+    partner_name = country_names[importer],
+    periodo = ifelse(year >= 2018, "Pós-2018", "Pré-2018")
+  )
+
+# Importações do Brasil
+imports_brasil <- trade_data %>%
+  filter(importer == "BRA", exporter != "BRA") %>%
+  mutate(
+    partner_name = country_names[exporter],
+    periodo = ifelse(year >= 2018, "Pós-2018", "Pré-2018")
+  )
+
+# Totais para value boxes
+total_exp <- sum(exports_brasil$trade_value, na.rm = TRUE) / 1e9
+total_imp <- sum(imports_brasil$trade_value, na.rm = TRUE) / 1e9
+saldo_total <- total_exp - total_imp
+prod_media_bra <- production_data %>%
+  filter(iso == "BRA") %>%
+  summarise(m = mean(production_mt, na.rm = TRUE)) %>%
+  pull(m)
+
+# Total quantidade em milhões de toneladas
+total_exp_tons <- sum(exports_brasil$trade_quantity_tons, na.rm = TRUE) / 1e6
+total_imp_tons <- sum(imports_brasil$trade_quantity_tons, na.rm = TRUE) / 1e6
+```
+
+Visão Geral
+=====================================
+
+Row {data-height=120}
+-------------------------------------
+
+### Total Exportações Brasil
+```{r}
+valueBox(sprintf("US$ %.2f bi", total_exp), icon = "fa-arrow-up", color = "success")
+```
+
+### Total Importações Brasil
+```{r}
+valueBox(sprintf("US$ %.2f bi", total_imp), icon = "fa-arrow-down", color = "warning")
+```
+
+### Saldo Comercial
+```{r}
+valueBox(sprintf("US$ %.2f bi", saldo_total),
+        icon = ifelse(saldo_total >= 0, "fa-plus-circle", "fa-minus-circle"),
+        color = ifelse(saldo_total >= 0, "success", "danger"))
+```
+
+### Produção Brasil (Mt/ano)
+```{r}
+valueBox(sprintf("%.1f Mt", prod_media_bra), icon = "fa-industry", color = "info")
+```
+
+Row {data-height=450}
+-------------------------------------
+
+### Gráfico 1: Evolução do Comércio de Aço do Brasil
+
+```{r}
+# Exportações agregadas por ano
+exp_agg <- exports_brasil %>%
+ group_by(year) %>%
+ summarise(valor = sum(trade_value, na.rm = TRUE) / 1e6, .groups = "drop")
+
+# Importações agregadas por ano
+imp_agg <- imports_brasil %>%
+ group_by(year) %>%
+ summarise(valor = sum(trade_value, na.rm = TRUE) / 1e6, .groups = "drop")
+
+# Plotly nativo
+plot_ly() %>%
+  add_trace(data = exp_agg, x = ~year, y = ~valor, type = 'scatter', mode = 'lines+markers',
+            name = 'Exportações', line = list(color = '#2E86AB', width = 3),
+            marker = list(color = '#2E86AB', size = 10)) %>%
+  add_trace(data = imp_agg, x = ~year, y = ~valor, type = 'scatter', mode = 'lines+markers',
+            name = 'Importações', line = list(color = '#E94F37', width = 3),
+            marker = list(color = '#E94F37', size = 10)) %>%
+  layout(
+    title = list(text = "Evolução do Comércio Brasileiro de Aço (2016-2024)<br><sub>Valores em milhões de USD</sub>"),
+    xaxis = list(title = "Ano", tickmode = "linear", tick0 = 2016, dtick = 1),
+    yaxis = list(title = "Valor (Milhões USD)", tickformat = ","),
+    legend = list(orientation = "h", y = -0.15, x = 0.3),
+    shapes = list(
+      list(type = "line", x0 = 2018, x1 = 2018, y0 = 0, y1 = max(c(exp_agg$valor, imp_agg$valor)) * 1.05,
+           line = list(color = "red", width = 2, dash = "dash"))
+    ),
+    annotations = list(
+      list(x = 2018.3, y = max(c(exp_agg$valor, imp_agg$valor)) * 0.95,
+           text = "Guerra<br>Comercial", showarrow = FALSE, font = list(color = "red", size = 12))
+    ),
+    hovermode = "x unified"
+  )
+```
+
+Row {data-height=430}
+-------------------------------------
+
+### Gráfico 2: Top Parceiros por Volume Total
+
+```{r}
+# Top parceiros por volume total (exp + imp)
+top_partners <- trade_data %>%
+  filter(exporter == "BRA" | importer == "BRA") %>%
+  mutate(
+    partner = ifelse(exporter == "BRA", importer, exporter),
+    flow_type = ifelse(exporter == "BRA", "Exportação", "Importação")
+  ) %>%
+  group_by(partner, flow_type) %>%
+  summarise(valor = sum(trade_value) / 1e6, .groups = "drop")
+
+plot_ly(top_partners, 
+        x = ~valor, 
+        y = ~reorder(partner, valor),
+        color = ~flow_type,
+        type = 'bar',
+        orientation = 'h') %>%
+  layout(
+    title = "Principais Parceiros Comerciais do Brasil em Aço (2016-2024)",
+    xaxis = list(title = "Valor (Milhões USD)"),
+    barmode = 'group'
+  )
+```
+
+### Gráfico 3: Impacto - Pré vs Pós Guerra Comercial
+
+```{r}
+compare_data <- bind_rows(
+ exports_brasil %>% mutate(fluxo = "Exportação"),
+ imports_brasil %>% mutate(fluxo = "Importação")
+) %>%
+ group_by(periodo, fluxo) %>%
+ summarise(
+   valor_total = sum(trade_value, na.rm = TRUE),
+   n_anos = n_distinct(year),
+   valor_medio = valor_total / n_anos / 1e6,
+   .groups = "drop"
+ )
+
+# Variação percentual
+var_pct <- compare_data %>%
+ select(periodo, fluxo, valor_medio) %>%
+ pivot_wider(names_from = periodo, values_from = valor_medio) %>%
+ mutate(variacao = (`Pós-2018` / `Pré-2018` - 1) * 100)
+
+var_exp <- var_pct$variacao[var_pct$fluxo == "Exportação"]
+var_imp <- var_pct$variacao[var_pct$fluxo == "Importação"]
+
+pre <- compare_data %>% filter(periodo == "Pré-2018")
+pos <- compare_data %>% filter(periodo == "Pós-2018")
+
+plot_ly() %>%
+  add_trace(data = pre, x = ~fluxo, y = ~valor_medio, type = 'bar', name = 'Pré-2018',
+            marker = list(color = '#7570b3'),
+            text = ~paste0(round(valor_medio, 0), " mi"), textposition = 'outside') %>%
+  add_trace(data = pos, x = ~fluxo, y = ~valor_medio, type = 'bar', name = 'Pós-2018',
+            marker = list(color = '#1b9e77'),
+            text = ~paste0(round(valor_medio, 0), " mi"), textposition = 'outside') %>%
+  layout(
+    title = list(text = paste0("Impacto Quantitativo da Guerra Comercial<br><sub>Exportação: ", 
+                               sprintf("%+.1f%%", var_exp), 
+                               " | Importação: ", sprintf("%+.1f%%", var_imp), "</sub>")),
+    xaxis = list(title = ""),
+    yaxis = list(title = "Milhões USD/ano (média)", tickformat = ","),
+    barmode = 'group',
+    legend = list(orientation = "h", y = -0.15, x = 0.3)
+  )
+```
+
+Mapa Interativo
+=====================================
+
+Row {data-height=80}
+-------------------------------------
+
+### Sobre o Mapa
+
+O mapa mostra os fluxos comerciais de aço do Brasil (2016-2024). Tamanho dos círculos = volume de comércio. **Azul** = superávit do Brasil, **Vermelho** = déficit. Clique nos marcadores para detalhes.
+
+Row {data-height=920}
+-------------------------------------
+
+### Mapa de Fluxos Comerciais do Brasil
+
+```{r}
+# Totais por parceiro
+exp_totals <- exports_brasil %>%
+ group_by(importer) %>%
+ summarise(
+   export_value = sum(trade_value, na.rm = TRUE) / 1e6,
+   export_tons = sum(trade_quantity_tons, na.rm = TRUE) / 1e3,
+   .groups = "drop") %>%
+ rename(iso = importer)
+
+imp_totals <- imports_brasil %>%
+ group_by(exporter) %>%
+ summarise(
+   import_value = sum(trade_value, na.rm = TRUE) / 1e6,
+   import_tons = sum(trade_quantity_tons, na.rm = TRUE) / 1e3,
+   .groups = "drop") %>%
+ rename(iso = exporter)
+
+map_data <- country_coords %>%
+ left_join(exp_totals, by = "iso") %>%
+ left_join(imp_totals, by = "iso") %>%
+ mutate(
+   export_value = replace_na(export_value, 0),
+   import_value = replace_na(import_value, 0),
+   export_tons = replace_na(export_tons, 0),
+   import_tons = replace_na(import_tons, 0),
+   total_trade = export_value + import_value,
+   saldo = export_value - import_value,
+   popup_text = paste0(
+     "<b>", country_name, "</b><br>",
+     "Exportações BRA→", iso, ": US$ ", format(round(export_value, 1), big.mark = ","), " mi",
+     " (", format(round(export_tons, 0), big.mark = ","), " mil t)<br>",
+     "Importações ", iso, "→BRA: US$ ", format(round(import_value, 1), big.mark = ","), " mi",
+     " (", format(round(import_tons, 0), big.mark = ","), " mil t)<br>",
+     "<b>Saldo: US$ ", format(round(saldo, 1), big.mark = ","), " mi</b>"
+   )
+ ) %>%
+ filter(iso != "BRA", total_trade > 0)
+
+brasil_data <- country_coords %>% filter(iso == "BRA")
+
+leaflet() %>%
+ addTiles() %>%
+ setView(lng = -40, lat = 10, zoom = 2) %>%
+ addCircleMarkers(
+   data = brasil_data,
+   lng = ~lng, lat = ~lat, radius = 20,
+   color = "#009C3B", fillColor = "#009C3B", fillOpacity = 0.8,
+   popup = "<b>BRASIL</b><br>País de referência"
+ ) %>%
+ addCircleMarkers(
+   data = map_data,
+   lng = ~lng, lat = ~lat,
+   radius = ~pmin(sqrt(total_trade) / 3 + 5, 25),
+   color = ~ifelse(saldo > 0, "#2E86AB", "#E94F37"),
+   fillColor = ~ifelse(saldo > 0, "#2E86AB", "#E94F37"),
+   fillOpacity = 0.7,
+   popup = ~popup_text,
+   label = ~country_name
+ ) %>%
+ addLegend(
+   position = "bottomright",
+   colors = c("#009C3B", "#2E86AB", "#E94F37"),
+   labels = c("Brasil", "Superávit BR", "Déficit BR"),
+   title = "Saldo Comercial", opacity = 0.8
+ )
+```
+
+Análise Detalhada
+=====================================
+
+Row
+-------------------------------------
+
+### Tabela Interativa: Fluxos Comerciais por País e Produto
+
+```{r}
+# Agregações com quantidade
+exp_agg_tab <- exports_brasil %>%
+ group_by(partner_name, produto) %>%
+ summarise(
+   valor_exp = sum(trade_value, na.rm = TRUE),
+   tons_exp = sum(trade_quantity_tons, na.rm = TRUE),
+   .groups = "drop"
+ )
+
+imp_agg_tab <- imports_brasil %>%
+ group_by(partner_name, produto) %>%
+ summarise(
+   valor_imp = sum(trade_value, na.rm = TRUE),
+   tons_imp = sum(trade_quantity_tons, na.rm = TRUE),
+   .groups = "drop"
+ )
+
+tabela <- full_join(exp_agg_tab, imp_agg_tab, by = c("partner_name", "produto")) %>%
+ mutate(
+   valor_exp = replace_na(valor_exp, 0),
+   valor_imp = replace_na(valor_imp, 0),
+   tons_exp = replace_na(tons_exp, 0),
+   tons_imp = replace_na(tons_imp, 0),
+   saldo = valor_exp - valor_imp
+ ) %>%
+ filter(!is.na(partner_name)) %>%
+ arrange(desc(valor_exp + valor_imp)) %>%
+ mutate(
+   `País` = partner_name,
+   `Produto` = produto,
+   `Exp (Mi USD)` = round(valor_exp / 1e6, 1),
+   `Imp (Mi USD)` = round(valor_imp / 1e6, 1),
+   `Exp (mil t)` = round(tons_exp / 1e3, 0),
+   `Imp (mil t)` = round(tons_imp / 1e3, 0),
+   `Saldo (Mi USD)` = round(saldo / 1e6, 1)
+ ) %>%
+ select(`País`, `Produto`, `Exp (Mi USD)`, `Exp (mil t)`, `Imp (Mi USD)`, `Imp (mil t)`, `Saldo (Mi USD)`)
+
+DT::datatable(
+ tabela,
+ options = list(
+   pageLength = 15, 
+   scrollX = TRUE, 
+   dom = 'frtip',
+   language = list(
+     search = "Buscar:",
+     lengthMenu = "Mostrar _MENU_ linhas",
+     info = "Mostrando _START_ a _END_ de _TOTAL_ linhas",
+     paginate = list(previous = "Anterior", `next` = "Próximo")
+   )
+ ),
+ rownames = FALSE,
+ filter = 'top',
+ caption = "Fluxos comerciais de aço do Brasil (2016-2024) - Use os filtros acima para explorar os dados"
+) %>%
+ DT::formatStyle('Saldo (Mi USD)',
+                 color = DT::styleInterval(0, c('#E94F37', '#2E86AB')),
+                 fontWeight = 'bold')
+```
+
+Conclusões
+=====================================
+
+Row
+-------------------------------------
+
+### Principais Conclusões
+
+**Contexto**
+
+Este dashboard analisa o comércio brasileiro de produtos siderúrgicos (HS 72 - Ferro e Aço básicos, e HS 73 - Obras de Ferro e Aço manufaturados) no período 2016-2024, abrangendo o período anterior e posterior à guerra comercial EUA-China iniciada em março de 2018.
+
+A análise utiliza **dados desagregados** em nível HS 4-dígitos de 10 países que representam aproximadamente 75% do comércio mundial de aço.
+
+---
+
+**Estrutura do Dashboard**
+
+- **4 Value Boxes:** Indicadores-chave do comércio brasileiro
+- **3 Gráficos Interativos:** Evolução temporal, principais parceiros comerciais, e impacto quantitativo
+- **1 Mapa Interativo:** Visualização geográfica dos fluxos comerciais
+- **1 Tabela Dinâmica:** Dados detalhados por país e produto com filtros
+
+---
+**Principais Achados**
+
+1. **Impacto Quantitativo da Guerra Comercial:**
+   - **Exportações:** Aumento de 61.4% após 2018, impulsionado pelo acordo de cotas com os EUA
+   - **Importações:** Aumento de 96.3% após 2018, principalmente devido ao desvio de comércio chinês
+   - Comparação usa médias anuais para períodos diferentes (2 anos pré vs 7 anos pós)
+
+2. **Trade Creation e Trade Diversion:**
+   - **Brasil → EUA:** Exportações saltaram de ~8 mil mi/ano para ~17 mil mi/ano após 2018
+   - **China → Brasil:** Importações aumentaram de ~3 mil mi/ano para ~8 mil mi/ano após 2018
+   - Evidência clara dos dois mecanismos econômicos previstos pela teoria
+
+3. **Composição por Produto:**
+   - Produtos básicos (HS 72 - Ferro e Aço) dominam as exportações brasileiras
+   - Produtos manufaturados (HS 73 - Obras manufaturadas) têm maior participação nas importações
+   - Reflete vantagens comparativas: Brasil exporta matéria-prima, importa produtos elaborados
+
+4. **Posição do Brasil no Mercado Mundial:**
+   - 9º maior produtor mundial de aço
+   - Produção média de 33 milhões de toneladas/ano (2016-2024)
+   - Representa cerca de 1.8% da produção mundial
+   - Total comercializado: US$ 146.4 bi (exportações) + US$ 78.3 bi (importações) no período
+
+---
+
+- **UN COMTRADE:** Fluxos bilaterais de comércio - dados desagregados HS 4-dígitos  
+  Acesso: https://comtradeplus.un.org/ (consultado em novembro de 2025)
+
+- **World Steel Association:** Produção de aço por país (2016-2024)  
+  Acesso: https://worldsteel.org/ (consultado em outubro de 2025)
+
+- **CEPII GeoDist:** Coordenadas geográficas das capitais e distâncias bilaterais  
+  Acesso: http://www.cepii.fr/CEPII/en/bdd_modele/bdd_modele_item.asp?id=6 (consultado em setembro de 2025)
+
+---
+
+**Referências Acadêmicas**
+
+- Amiti, M., Redding, S. J., & Weinstein, D. E. (2019). The Impact of the 2018 Tariffs on Prices and Welfare. *Journal of Economic Perspectives*, 33(4), 187-210.
+
+- Fajgelbaum, P. D., Goldberg, P. K., Kennedy, P. J., & Khandelwal, A. K. (2020). The Return to Protectionism. *Quarterly Journal of Economics*, 135(1), 1-55.
+
+---
